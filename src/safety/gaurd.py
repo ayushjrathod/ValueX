@@ -1,10 +1,11 @@
 import pickle
-from dataclasses import dataclass
 from pathlib import Path
 
+from pydantic import BaseModel, ConfigDict
 
-@dataclass(frozen=True)
-class SafetyVerdict:
+class SafetyVerdict(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
     blocked: bool
     category: str | None = None
     message: str | None = None
@@ -46,7 +47,9 @@ def _load_model():
 def check(query: str) -> SafetyVerdict:
     model = _load_model()
     proba = model.predict_proba([query])[0]
-    blocked = bool(proba[1] >= 0.5)
+    # Higher threshold reduces false positives on legitimate financial queries
+    # that share vocabulary with harmful ones (e.g. "returns", "fund", "trade").
+    blocked = bool(proba[1] >= 0.58)
 
     if not blocked:
         return SafetyVerdict(blocked=False)

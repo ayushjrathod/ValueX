@@ -8,8 +8,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+from src.classifier.classifier import ClassificationError, ClassificationRefusal, classify
 from src.config import get_settings
 from src.safety.gaurd import check
+from src.utils.llm import client as llm_client
 
 # set up logging
 logging.basicConfig(level=logging.INFO)
@@ -121,14 +123,49 @@ async def stream_chat_response(request: ChatRequest) -> AsyncIterator[dict[str, 
                 "session_id": request.session_id,
             },
         )
+        classification = classify(request.query, client=llm_client)
+        entities = classification.entities_dict()
+        logger.info(
+            "Classifier routed query: agent=%s entities=%s",
+            classification.agent,
+            entities,
+        )
+        yield sse_event(
+            "metadata",
+            {
+                "stage": "classifier",
+                "status": "routed",
+                "agent": classification.agent,
+                "entities": entities,
+            },
+        )
         yield sse_event(
             "message",
             {
-                "text": "Safety guard passed. Classifier and agent routing are not implemented yet.",
-                "next_stage": "classifier",
+                "text": f"Routed request to {classification.agent}.",
+                "next_stage": classification.agent,
             },
         )
         yield sse_event("done", {"status": "ok"})
+        
+    except ClassificationRefusal as exc:
+        logger.warning("Classifier refused request: %s", exc)
+        yield sse_event(
+            "error",
+            {
+                "message": "Classifier refused to process the request.",
+                "code": "classification_refused",
+            },
+        )
+    except ClassificationError:
+        logger.exception("Classifier failed to parse the OpenAI response")
+        yield sse_event(
+            "error",
+            {
+                "message": "Request failed while classifying the query.",
+                "code": "classification_error",
+            },
+        )
     except Exception:
         logger.exception("Unhandled error while streaming chat response")
         yield sse_event(
