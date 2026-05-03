@@ -49,15 +49,6 @@ class ClassificationRefusal(ClassificationError):
     """Raised when OpenAI refuses the classification request."""
 
 
-class ClassificationInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    query: str = Field(
-        ...,
-        description="The raw user query to route to the most appropriate financial assistant agent.",
-    )
-
-
 class ClassificationEntities(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -176,11 +167,12 @@ def classify(
     query: str,
     *,
     client: object | None = None,
+    llm: object | None = None,
     model: str | None = None,
 ) -> ClassificationResult:
     """Classify a user query with OpenAI structured outputs."""
     settings = get_settings()
-    openai_client = client
+    openai_client = client or llm
 
     response = openai_client.responses.parse(
         model=model or settings.openai_model,

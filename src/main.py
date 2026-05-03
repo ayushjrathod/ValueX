@@ -10,7 +10,9 @@ from sse_starlette.sse import EventSourceResponse
 
 from src.classifier.classifier import ClassificationError, ClassificationRefusal, classify
 from src.config import get_settings
+from src.router import route
 from src.safety.gaurd import check
+from src.users import get_user
 from src.utils.llm import client as llm_client
 
 # set up logging
@@ -95,6 +97,7 @@ async def chat(request: ChatRequest):
 
 async def stream_chat_response(request: ChatRequest) -> AsyncIterator[dict[str, str]]:
     try:
+        # 1. Safety guard
         verdict = check(request.query)
         logger.info(
             "Safety guard verdict: blocked=%s category=%s",
@@ -123,6 +126,7 @@ async def stream_chat_response(request: ChatRequest) -> AsyncIterator[dict[str, 
                 "session_id": request.session_id,
             },
         )
+        # 2. Classify and route
         classification = classify(request.query, client=llm_client)
         entities = classification.entities_dict()
         logger.info(
@@ -139,42 +143,29 @@ async def stream_chat_response(request: ChatRequest) -> AsyncIterator[dict[str, 
                 "entities": entities,
             },
         )
-        yield sse_event(
-            "message",
-            {
-                "text": f"Routed request to {classification.agent}.",
-                "next_stage": classification.agent,
-            },
+
+        user = get_user(request.user_id) if request.user_id else None
+
+        agent_response = route(
+            classification,
+            user=user,
+            client=llm_client,
         )
+        yield sse_event("message", agent_response)
         yield sse_event("done", {"status": "ok"})
         
     except ClassificationRefusal as exc:
         logger.warning("Classifier refused request: %s", exc)
-        yield sse_event(
-            "error",
-            {
-                "message": "Classifier refused to process the request.",
-                "code": "classification_refused",
-            },
-        )
+        error_msg, error_code = "Classifier refused to process the request.", "classification_refused"
     except ClassificationError:
         logger.exception("Classifier failed to parse the OpenAI response")
-        yield sse_event(
-            "error",
-            {
-                "message": "Request failed while classifying the query.",
-                "code": "classification_error",
-            },
-        )
+        error_msg, error_code = "Request failed while classifying the query.", "classification_error"
     except Exception:
         logger.exception("Unhandled error while streaming chat response")
-        yield sse_event(
-            "error",
-            {
-                "message": "Request failed while processing the AI pipeline.",
-                "code": "internal_error",
-            },
-        )
+        error_msg, error_code = "Request failed while processing the AI pipeline.", "internal_error"
+
+    if 'error_msg' in locals():
+        yield sse_event("error", {"message": error_msg, "code": error_code})
 
 
 def sse_event(event: str, data: dict) -> dict[str, str]:

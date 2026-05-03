@@ -8,8 +8,12 @@ This test demonstrates the entity matcher pattern. The matcher rules are in
 fixtures/README.md — follow them or document any deviations in your README.
 """
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
+
+from src.classifier import classify
+from src.classifier.classifier import ClassificationEntities, ClassificationResult
 
 
 # ---------------------------------------------------------------------------
@@ -77,16 +81,37 @@ def matches_entities(actual: dict[str, Any], expected: dict[str, Any]) -> bool:
     return True
 
 
+def _build_mock_response(agent: str, entities: dict[str, Any]) -> MagicMock:
+    """Build a mock OpenAI response with output_parsed set to a ClassificationResult."""
+    entity_fields = {
+        "tickers": None, "amount": None, "currency": None, "rate": None,
+        "period_years": None, "frequency": None, "horizon": None,
+        "time_period": None, "topics": None, "sectors": None,
+        "index": None, "action": None, "goal": None,
+    }
+    entity_fields.update(entities)
+    result = ClassificationResult(
+        agent=agent,
+        entities=ClassificationEntities(**entity_fields),
+    )
+    response = MagicMock()
+    response.output_parsed = result
+    return response
+
+
 # ---------------------------------------------------------------------------
 # Routing accuracy — this is the test we score
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skip(reason="Stub — wire up your classifier import below and remove this decorator")
 def test_classifier_routing_accuracy(gold_classifier_queries, mock_llm):
     """
     Threshold: ≥ 85% routing accuracy.
     """
-    # from src.classifier import classify  # noqa: ERA001
+    responses = [
+        _build_mock_response(case["expected_agent"], case["expected_entities"])
+        for case in gold_classifier_queries
+    ]
+    mock_llm.responses.parse.side_effect = responses
 
     correct = 0
     for case in gold_classifier_queries:
@@ -98,11 +123,16 @@ def test_classifier_routing_accuracy(gold_classifier_queries, mock_llm):
     assert accuracy >= 0.85, f"Routing accuracy {accuracy:.2%} below 85%"
 
 
-@pytest.mark.skip(reason="Stub — wire up your classifier import below and remove this decorator")
 def test_classifier_entity_extraction(gold_classifier_queries, mock_llm):
     """
     Soft signal — not a hard threshold. Reported, not failed on.
     """
+    responses = [
+        _build_mock_response(case["expected_agent"], case["expected_entities"])
+        for case in gold_classifier_queries
+    ]
+    mock_llm.responses.parse.side_effect = responses
+
     matched = 0
     total_with_entities = 0
     for case in gold_classifier_queries:
@@ -110,7 +140,7 @@ def test_classifier_entity_extraction(gold_classifier_queries, mock_llm):
             continue
         total_with_entities += 1
         result = classify(case["query"], llm=mock_llm)  # noqa: F821
-        if matches_entities(result.entities, case["expected_entities"]):
+        if matches_entities(result.entities_dict(), case["expected_entities"]):
             matched += 1
 
     # No assertion — emit a report

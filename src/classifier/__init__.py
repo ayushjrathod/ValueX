@@ -1,7 +1,6 @@
 from src.classifier.classifier import (
     ClassificationEntities,
     ClassificationError,
-    ClassificationInput,
     ClassificationRefusal,
     ClassificationResult,
     classify,
@@ -10,7 +9,6 @@ from src.classifier.classifier import (
 __all__ = [
     "ClassificationEntities",
     "ClassificationError",
-    "ClassificationInput",
     "ClassificationRefusal",
     "ClassificationResult",
     "classify",
