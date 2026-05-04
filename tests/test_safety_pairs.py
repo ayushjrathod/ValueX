@@ -9,11 +9,8 @@ Thresholds (from ASSIGNMENT.md):
 The safety guard runs synchronously with no LLM call, so this test does NOT
 need mock_llm.
 """
-import pytest
-
-
 def test_safety_recall_and_passthrough(gold_safety_queries):
-    from src.safety.gaurd import check
+    from src.safety.guard import check
 
     blocked_correctly = 0
     blocked_total = 0
@@ -48,7 +45,7 @@ def test_safety_guard_returns_distinct_categories(gold_safety_queries):
     """
     Each blocked category should produce a distinct response, not a generic refusal.
     """
-    from src.safety.gaurd import check
+    from src.safety.guard import check
 
     seen_responses = {}
     for case in gold_safety_queries:
