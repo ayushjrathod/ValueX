@@ -1,30 +1,79 @@
 from __future__ import annotations
 
-import os
-from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
-from dotenv import load_dotenv
+from pydantic import ValidationError, field_validator, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# APP_ENV must be one of these (see _normalize_app_env).
+APP_ENVS: tuple[str, ...] = ("development", "production", "test")
 
+# Defaults when the matching env var is unset (field names are the env keys, uppercased).
+OPENAI_MODEL = "gpt-4o-mini"
+PIPELINE_TIMEOUT_S = 8.0
+E2E_WARN_THRESHOLD_S = 6.0
+COST_BUDGET_USD = 0.05
+CLASSIFIER_TEMPERATURE = 0.1
+PORTFOLIO_MAX_TOOL_ROUNDS = 5
+PORTFOLIO_TOOL_TEMPERATURE = 0.2
+PORTFOLIO_OBSERVATION_TEMPERATURE = 0.4
+PORTFOLIO_RECENT_HISTORY_TURNS = 4
+SESSION_MAX_TURNS = 10
+SESSION_TTL_SECONDS = 3600
+SAFETY_BLOCK_THRESHOLD = 0.58
+MARKET_DATA_MAX_WORKERS = 10
+API_PORT = 8000
 
-APP_ENVS: tuple[str] = ("development", "production", "test")
-DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
+# USD per 1M tokens; used by request cost estimates (see tracking.estimate_cost).
+MODEL_PRICING_USD_PER_1M_TOKENS: dict[str, dict[str, float]] = {
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+    "gpt-4.1": {"input": 2.00, "output": 8.00},
+}
+
+# One "turn" in session history = user message + assistant message.
+SESSION_MESSAGES_PER_TURN = 2
+
+# Portfolio concentration flags (% weight in largest / top-N positions).
+TOP_HOLDINGS_COUNT = 3
+HIGH_CONCENTRATION_THRESHOLD_PCT = 50.0
+WARN_CONCENTRATION_THRESHOLD_PCT = 30.0
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
 
 
 class ConfigError(RuntimeError):
-    """Raised when environment configuration is missing or invalid."""
+    """Invalid or missing environment configuration."""
 
 
-@dataclass(frozen=True, slots=True)
-class Settings:
-    app_env: str
-    openai_api_key: str
-    openai_model: str
-    database_url: str | None
-    pgvector_database_url: str | None
-    redis_url: str | None
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=_project_root() / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        frozen=True,
+    )
+
+    app_env: str = "development"
+    openai_api_key: str = ""
+    openai_model: str = OPENAI_MODEL
+    database_url: str | None = None
+    pgvector_database_url: str | None = None
+    redis_url: str | None = None
+    pipeline_timeout_s: float = PIPELINE_TIMEOUT_S
+    e2e_warn_threshold_s: float = E2E_WARN_THRESHOLD_S
+    cost_budget_usd: float = COST_BUDGET_USD
+    classifier_temperature: float = CLASSIFIER_TEMPERATURE
+    portfolio_max_tool_rounds: int = PORTFOLIO_MAX_TOOL_ROUNDS
+    portfolio_tool_temperature: float = PORTFOLIO_TOOL_TEMPERATURE
+    portfolio_observation_temperature: float = PORTFOLIO_OBSERVATION_TEMPERATURE
+    portfolio_recent_history_turns: int = PORTFOLIO_RECENT_HISTORY_TURNS
+    session_max_turns: int = SESSION_MAX_TURNS
+    session_ttl_seconds: int = SESSION_TTL_SECONDS
+    safety_block_threshold: float = SAFETY_BLOCK_THRESHOLD
+    market_data_max_workers: int = MARKET_DATA_MAX_WORKERS
+    api_port: int = API_PORT
 
     @property
     def is_development(self) -> bool:
@@ -43,63 +92,61 @@ class Settings:
             raise ConfigError("OPENAI_API_KEY is required for LLM-backed features.")
         return self.openai_api_key
 
+    @field_validator("app_env", mode="before")
+    @classmethod
+    def _normalize_app_env(cls, value: object) -> str:
+        app_env = str(value or "development").strip().lower()
+        if app_env not in APP_ENVS:
+            allowed = ", ".join(APP_ENVS)
+            raise ValueError(f"APP_ENV must be one of: {allowed}. Got {app_env!r}.")
+        return app_env
 
-def load_environment(env_file: str | Path | None = None) -> None:
-    """
-    Load environment variables from .env without overriding real environment.
+    @field_validator("openai_model", mode="before")
+    @classmethod
+    def _normalize_openai_model(cls, value: object) -> str:
+        model = str(value or OPENAI_MODEL).strip()
+        if not model:
+            raise ValueError("OPENAI_MODEL cannot be blank.")
+        return model
 
-    Real environment variables should win in production and CI. The local .env
-    file is only a convenience for development.
-    """
-    dotenv_path = Path(env_file) if env_file else _project_root() / ".env"
-    load_dotenv(dotenv_path=dotenv_path, override=False)
+    @field_validator("openai_api_key", mode="before")
+    @classmethod
+    def _normalize_openai_api_key(cls, value: object) -> str:
+        return str(value or "").strip()
+
+    @field_validator("database_url", "pgvector_database_url", mode="before")
+    @classmethod
+    def _validate_postgres_url(cls, value: object, info) -> str | None:
+        database_url = str(value or "").strip() or None
+        if database_url:
+            parsed = urlparse(database_url)
+            if parsed.scheme not in ("postgresql", "postgres") or not parsed.netloc:
+                raise ValueError(f"{info.field_name.upper()} must be a valid PostgreSQL URL.")
+        return database_url
+
+    @field_validator("redis_url", mode="before")
+    @classmethod
+    def _validate_redis_url(cls, value: object) -> str | None:
+        redis_url = str(value or "").strip() or None
+        if redis_url:
+            parsed = urlparse(redis_url)
+            if parsed.scheme not in ("redis", "rediss") or not parsed.netloc:
+                raise ValueError("REDIS_URL must be a valid Redis URL.")
+        return redis_url
+
+    @model_validator(mode="after")
+    def _validate_production_requirements(self) -> Settings:
+        if self.is_production and not self.openai_api_key:
+            raise ValueError("OPENAI_API_KEY must be set when APP_ENV=production.")
+        return self
 
 
 def get_settings(env_file: str | Path | None = None) -> Settings:
-    load_environment(env_file)
+    """Load settings; *env_file* overrides the project `.env` path (e.g. in tests)."""
+    try:
+        if env_file is not None:
+            return Settings(_env_file=Path(env_file))
+        return Settings()
+    except ValidationError as exc:
+        raise ConfigError(str(exc)) from exc
 
-    app_env_value = (os.getenv("APP_ENV") or "development").strip().lower()
-    if app_env_value not in APP_ENVS:
-        allowed = ", ".join(APP_ENVS)
-        raise ConfigError(f"APP_ENV must be one of: {allowed}. Got {app_env_value!r}.")
-
-    openai_api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
-    openai_model = (os.getenv("OPENAI_MODEL") or DEFAULT_OPENAI_MODEL).strip()
-    if not openai_model:
-        raise ConfigError("OPENAI_MODEL cannot be blank.")
-
-    database_url = (os.getenv("DATABASE_URL") or "").strip() or None
-    if database_url:
-        parsed = urlparse(database_url)
-        if parsed.scheme not in ("postgresql", "postgres") or not parsed.netloc:
-            raise ConfigError("DATABASE_URL must be a valid PostgreSQL URL.")
-
-    pgvector_database_url = (os.getenv("PGVECTOR_DATABASE_URL") or "").strip() or None
-    if pgvector_database_url:
-        parsed = urlparse(pgvector_database_url)
-        if parsed.scheme not in ("postgresql", "postgres") or not parsed.netloc:
-            raise ConfigError("PGVECTOR_DATABASE_URL must be a valid PostgreSQL URL.")
-
-    redis_url = (os.getenv("REDIS_URL") or "").strip() or None
-    if redis_url:
-        parsed = urlparse(redis_url)
-        if parsed.scheme not in ("redis", "rediss") or not parsed.netloc:
-            raise ConfigError("REDIS_URL must be a valid Redis URL.")
-
-    settings = Settings(
-        app_env=app_env_value,
-        openai_api_key=openai_api_key,
-        openai_model=openai_model,
-        database_url=database_url,
-        pgvector_database_url=pgvector_database_url,
-        redis_url=redis_url,
-    )
-
-    if settings.is_production and not settings.openai_api_key:
-        raise ConfigError("OPENAI_API_KEY must be set when APP_ENV=production.")
-
-    return settings
-
-
-def _project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
