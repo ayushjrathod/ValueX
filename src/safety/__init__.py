@@ -1,3 +1,3 @@
-from src.safety.gaurd import SafetyVerdict, check
+from src.safety.guard import SafetyVerdict, check
 
 __all__ = ["SafetyVerdict", "check"]
