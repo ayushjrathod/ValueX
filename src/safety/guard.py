@@ -3,6 +3,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from src.config.settings import get_settings
+
 class SafetyVerdict(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -49,7 +51,7 @@ def check(query: str) -> SafetyVerdict:
     proba = model.predict_proba([query])[0]
     # Higher threshold reduces false positives on legitimate financial queries
     # that share vocabulary with harmful ones (e.g. "returns", "fund", "trade").
-    blocked = bool(proba[1] >= 0.58)
+    blocked = bool(proba[1] >= get_settings().safety_block_threshold)
 
     if not blocked:
         return SafetyVerdict(blocked=False)

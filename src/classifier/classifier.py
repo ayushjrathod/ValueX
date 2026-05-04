@@ -1,8 +1,12 @@
+import logging
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from openai import OpenAI
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from src.config.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 AgentName = Literal[
@@ -20,10 +24,14 @@ AgentName = Literal[
 CLASSIFIER_SYSTEM_PROMPT = """
 You are Valura's financial intent classifier.
 
-Return the single best agent and extract only entities explicitly present or
-strongly implied by the user query. For multi-intent queries, choose the primary
+Return the single best agent, a short intent label, extract only entities
+explicitly present or strongly implied by the user query, and provide an
+informational safety verdict. For multi-intent queries, choose the primary
 intent. For greetings, definitions, educational questions, conversational
 messages, and gibberish, use general_query.
+
+If prior conversation context is provided, use it to resolve follow-up references
+(e.g. pronouns, "my portfolio", "that stock") to the correct agent and entities.
 
 Agent taxonomy:
 - portfolio_health: portfolio assessment, concentration, performance, benchmarking.
@@ -38,15 +46,24 @@ Agent taxonomy:
 - general_query: education, definitions, greetings, conversation, unrelated/gibberish.
 
 Use null for entity fields that are not present. Do not invent missing values.
+
+For `intent`, write a concise 2-5 word label describing the user's intent
+(e.g. "portfolio health check", "stock price lookup", "retirement planning").
+
+For `safety_verdict`, assess whether the query touches harmful financial topics
+(insider trading, market manipulation, money laundering, guaranteed returns,
+reckless advice, sanctions evasion, fraud). Return "safe" for normal queries,
+or a brief category label if the query is borderline.
+This verdict is informational only — it does NOT block the request.
 """.strip()
 
 
 class ClassificationError(RuntimeError):
-    """Raised when the classifier cannot produce a parsed structured result."""
+    """Structured parse failed or response was unusable."""
 
 
 class ClassificationRefusal(ClassificationError):
-    """Raised when OpenAI refuses the classification request."""
+    """Model returned a refusal instead of a classification."""
 
 
 class ClassificationEntities(BaseModel):
@@ -149,6 +166,10 @@ class ClassificationEntities(BaseModel):
 class ClassificationResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    intent: str = Field(
+        ...,
+        description="Concise 2-5 word label of the user's intent (e.g. 'portfolio health check').",
+    )
     agent: AgentName = Field(
         ...,
         description="The single best routing target for the query.",
@@ -157,34 +178,82 @@ class ClassificationResult(BaseModel):
         ...,
         description="Extracted entities. Use null for fields that are not present.",
     )
+    safety_verdict: str = Field(
+        default="safe",
+        description="Informational safety assessment: 'safe' or a brief category label if borderline. Does NOT block.",
+    )
+
+    _token_usage: tuple[int, int] | None = PrivateAttr(default=None)
 
     def entities_dict(self) -> dict[str, object]:
-        """Return only populated entities for fixture-style subset matching."""
+        """Entities with nulls stripped (handy for logs and tests)."""
         return self.entities.model_dump(exclude_none=True)
+
+
+_FALLBACK_ENTITIES = ClassificationEntities(
+    tickers=None, amount=None, currency=None, rate=None,
+    period_years=None, frequency=None, horizon=None,
+    time_period=None, topics=None, sectors=None,
+    index=None, action=None, goal=None,
+)
 
 
 def classify(
     query: str,
     *,
-    client: object | None = None,
-    llm: object | None = None,
-    model: str | None = None,
+    client: OpenAI,
+    session_history: list[dict[str, str]] | None = None,
 ) -> ClassificationResult:
-    """Classify a user query with OpenAI structured outputs."""
-    settings = get_settings()
-    openai_client = client or llm
+    """Classify a user query with OpenAI structured outputs.
 
-    response = openai_client.responses.parse(
-        model=model or settings.openai_model,
-        input=[
-            {"role": "system", "content": CLASSIFIER_SYSTEM_PROMPT},
-            {"role": "user", "content": query},
-        ],
-        store=False,
-        temperature=0.1,
-        text_format=ClassificationResult,
-    )
-    return _parse_openai_response(response)
+    On LLM failure, returns a fallback classification routed to general_query
+    rather than crashing the request.
+    """
+    settings = get_settings()
+
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": CLASSIFIER_SYSTEM_PROMPT},
+    ]
+
+    if session_history:
+        prior_queries = [
+            msg["content"] for msg in session_history if msg.get("role") == "user"
+        ]
+        if prior_queries:
+            context_block = "Prior user queries in this session:\n" + "\n".join(
+                f"- {q}" for q in prior_queries
+            )
+            messages.append({"role": "user", "content": context_block})
+
+    messages.append({"role": "user", "content": query})
+
+    try:
+        response = client.responses.parse(
+            model=settings.openai_model,
+            input=messages,
+            store=False,
+            temperature=settings.classifier_temperature,
+            text_format=ClassificationResult,
+        )
+        result = _parse_openai_response(response)
+    except (ClassificationRefusal, ClassificationError):
+        raise
+    except Exception:
+        logger.exception("LLM call failed during classification — using fallback")
+        return ClassificationResult(
+            intent="fallback",
+            agent="general_query",
+            entities=_FALLBACK_ENTITIES,
+            safety_verdict="safe",
+        )
+
+    usage = getattr(response, "usage", None)
+    inp = getattr(usage, "input_tokens", 0) if usage else 0
+    out = getattr(usage, "output_tokens", 0) if usage else 0
+    if isinstance(inp, int) and inp > 0:
+        result._token_usage = (inp, out)
+
+    return result
 
 
 def _parse_openai_response(response: object) -> ClassificationResult:
