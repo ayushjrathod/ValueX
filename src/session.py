@@ -44,13 +44,14 @@ class SessionStore:
     ) -> None:
         """Append one user→assistant exchange to the session."""
         with self._lock:
+            sanitized_response = dict(assistant_response)
+            sanitized_response.pop("_meta", None)
             history = self._store.setdefault(session_id, [])
             history.append({"role": "user", "content": user_message})
             history.append({
                 "role": "assistant",
-                "content": json.dumps(assistant_response, default=str),
+                "content": json.dumps(sanitized_response, default=str),
             })
-            
             # Trim history to keep only the most recent turns and update the timestamp
             max_items = self._max_turns * SESSION_MESSAGES_PER_TURN
             if len(history) > max_items:

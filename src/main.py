@@ -14,7 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 from src.classifier.classifier import ClassificationError, ClassificationRefusal, classify
 from src.config import get_settings
 from src.router import route
-from src.safety.guard import check
+from src.safety.guard import check, warm_load as warm_safety_model
 from src.session import get_session_store
 from src.users import get_user
 from src.utils.llm import get_client
@@ -33,6 +33,8 @@ class ChatRequest(BaseModel):
 
 async def lifespan(app: FastAPI):
     logger.info("Starting up...")
+    warm_safety_model()
+    logger.info("Safety classifier warmed.")
     yield
     logger.info("Shutting down...")
     logger.info("Shutdown complete.")
@@ -103,6 +105,7 @@ async def stream_chat_response(request: ChatRequest) -> AsyncIterator[dict[str, 
     t_start = time.perf_counter()
     deadline = t_start + settings.pipeline_timeout_s
     metrics: dict[str, Any] = {}
+    t_first_emit: float | None = None
 
     try:
         # ---- Safety guard (sync, <10 ms) ----
@@ -118,6 +121,7 @@ async def stream_chat_response(request: ChatRequest) -> AsyncIterator[dict[str, 
             metrics["safety_ms"],
         )
         if verdict.blocked:
+            t_first_emit = time.perf_counter()
             yield sse_event(
                 "safety_blocked",
                 {
@@ -130,6 +134,7 @@ async def stream_chat_response(request: ChatRequest) -> AsyncIterator[dict[str, 
             yield sse_event("done", {"status": "blocked"})
             return
 
+        t_first_emit = time.perf_counter()
         yield sse_event(
             "metadata",
             {
@@ -220,6 +225,11 @@ async def stream_chat_response(request: ChatRequest) -> AsyncIterator[dict[str, 
             yield sse_event("done", {"status": "error"})
             return
 
+        yield sse_event(
+            "progress",
+            {"stage": "agent_dispatch", "agent": classification.agent},
+        )
+
         try:
             agent_response = await asyncio.wait_for(
                 asyncio.to_thread(
@@ -242,14 +252,12 @@ async def stream_chat_response(request: ChatRequest) -> AsyncIterator[dict[str, 
             (t_agent - t_classify) * 1000
         )
 
-        # Session persistence
-        if request.session_id and agent_response.get("status") == "ok":
-            session_store.add_turn(
-                request.session_id, request.query, agent_response,
-            )
-
         # Structured log + metrics dict for the SSE `metrics` event.
+        # `first_message_ms` measures the first SSE event the client sees,
         t_end = time.perf_counter()
+        metrics["first_message_ms"] = round(
+            ((t_first_emit or t_end) - t_start) * 1000
+        )
         track_and_log_metrics(
             agent_response=agent_response,
             classification=classification,
@@ -261,6 +269,12 @@ async def stream_chat_response(request: ChatRequest) -> AsyncIterator[dict[str, 
             settings=settings,
             user_id=request.user_id,
         )
+
+        # Persist the sanitized agent payload, not internal observability metadata.
+        if request.session_id:
+            session_store.add_turn(
+                request.session_id, request.query, agent_response,
+            )
 
         yield sse_event("message", agent_response)
         yield sse_event("metrics", metrics)

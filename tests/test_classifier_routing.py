@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from src.agents.catalog import AGENT_DESCRIPTIONS
 from src.classifier import classify
 from src.classifier.classifier import ClassificationEntities, ClassificationResult
 
@@ -195,13 +196,8 @@ def test_classifier_prompt_contains_all_agents(mock_llm):
     messages = call_kwargs.kwargs.get("input") or call_kwargs[1].get("input")
     system_msg = next(m for m in messages if m["role"] == "system")
 
-    for agent in [
-        "portfolio_health", "market_research", "investment_strategy",
-        "financial_planning", "financial_calculator", "risk_assessment",
-        "product_recommendation", "predictive_analysis", "customer_support",
-        "general_query",
-    ]:
-        assert agent in system_msg["content"], f"Agent {agent!r} missing from system prompt"
+    for agent in AGENT_DESCRIPTIONS:
+        assert agent.value in system_msg["content"], f"Agent {agent.value!r} missing from system prompt"
 
 
 def test_classifier_uses_structured_output_schema(mock_llm):

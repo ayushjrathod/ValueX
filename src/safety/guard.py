@@ -46,6 +46,10 @@ def _load_model():
     return _model
 
 
+def warm_load() -> None:
+    _load_model()
+
+
 def check(query: str) -> SafetyVerdict:
     model = _load_model()
     proba = model.predict_proba([query])[0]

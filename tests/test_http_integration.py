@@ -7,13 +7,14 @@ All LLM calls are mocked so tests run without OPENAI_API_KEY.
 """
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from src.agents.portfolio_health import Observation, ObservationsResult
 from src.classifier.classifier import ClassificationEntities, ClassificationResult
+from src.session import get_session_store
 
 
 def _make_classification(agent: str = "portfolio_health", **entity_overrides) -> ClassificationResult:
@@ -147,6 +148,82 @@ def test_stub_agent_event_flow(mock_get_client, mock_classify, app_client):
     assert "intent" in msg["data"]
 
 
+@patch("src.main.classify")
+@patch("src.main.get_client")
+def test_stub_agent_response_is_persisted_for_session_followups(mock_get_client, mock_classify, app_client):
+    """Stub responses should still be saved so later turns can resolve follow-ups."""
+    session_id = "sess_stub_persist"
+    session_store = get_session_store()
+    session_store.clear(session_id)
+
+    mock_get_client.return_value = MagicMock()
+    mock_classify.return_value = _make_classification("market_research", tickers=["AAPL"])
+
+    response = app_client.post("/chat", json={
+        "query": "hows apple doing",
+        "session_id": session_id,
+    })
+    assert response.status_code == 200
+
+    history = session_store.get_history(session_id)
+    assert len(history) == 2
+    assert history[0] == {"role": "user", "content": "hows apple doing"}
+    assert history[1]["role"] == "assistant"
+    assert "not_implemented" in history[1]["content"]
+
+    session_store.clear(session_id)
+
+
+@patch("src.main.get_client")
+def test_classifier_fallback_routes_to_general_query_stub(mock_get_client, app_client):
+    """Classifier API failures should downgrade to general_query and still complete the pipeline."""
+    mock_client = MagicMock()
+    mock_client.responses.parse.side_effect = RuntimeError("API down")
+    mock_get_client.return_value = mock_client
+
+    response = app_client.post("/chat", json={
+        "query": "hello there",
+    })
+    assert response.status_code == 200
+
+    events = _parse_sse_events(response)
+    event_names = [e["event"] for e in events]
+
+    assert "message" in event_names
+    assert events[-1]["event"] == "done"
+    assert events[-1]["data"]["status"] == "ok"
+
+    classifier_meta = next(
+        e for e in events
+        if e["event"] == "metadata" and e["data"].get("stage") == "classifier"
+    )
+    assert classifier_meta["data"]["agent"] == "general_query"
+
+    msg = next(e for e in events if e["event"] == "message")
+    assert msg["data"]["status"] == "not_implemented"
+    assert msg["data"]["agent"] == "general_query"
+
+
+@patch("src.main.classify")
+@patch("src.main.get_client")
+def test_user_not_found_returns_structured_error(mock_get_client, mock_classify, app_client):
+    """Unknown user_id returns a structured SSE error instead of routing."""
+    mock_get_client.return_value = MagicMock()
+    mock_classify.return_value = _make_classification("portfolio_health")
+
+    response = app_client.post("/chat", json={
+        "query": "how is my portfolio doing?",
+        "user_id": "usr_missing",
+    })
+    assert response.status_code == 200
+
+    events = _parse_sse_events(response)
+    error_event = next(e for e in events if e["event"] == "error")
+    assert error_event["data"]["code"] == "user_not_found"
+    assert events[-1]["event"] == "done"
+    assert events[-1]["data"]["status"] == "error"
+
+
 @patch("src.main.route")
 @patch("src.main.classify")
 @patch("src.main.get_client")
@@ -175,26 +252,40 @@ def test_full_pipeline_event_order(mock_get_client, mock_classify, mock_route, a
     # Verify expected event order
     assert event_names[0] == "metadata"  # safety passed
     assert "metadata" in event_names     # classifier metadata
+    assert "progress" in event_names     # before agent dispatch
     assert "message" in event_names
     assert "metrics" in event_names
     assert event_names[-1] == "done"
 
+    # progress must arrive before the final message
+    progress_idx = event_names.index("progress")
+    message_idx = event_names.index("message")
+    assert progress_idx < message_idx
+
     # Verify metrics contain cost tracking
     metrics_event = next(e for e in events if e["event"] == "metrics")
     assert "e2e_ms" in metrics_event["data"]
+    assert "first_message_ms" in metrics_event["data"]
     assert "estimated_cost_usd" in metrics_event["data"]
+    assert metrics_event["data"]["first_message_ms"] <= metrics_event["data"]["e2e_ms"]
 
     # Verify done status
     done_event = next(e for e in events if e["event"] == "done")
     assert done_event["data"]["status"] == "ok"
 
 
-@patch("src.main.asyncio.wait_for", new_callable=AsyncMock)
+async def _raise_timeout(awaitable, timeout):
+    if hasattr(awaitable, "close"):
+        awaitable.close()
+    raise asyncio.TimeoutError
+
+
+@patch("src.main.asyncio.to_thread", return_value=object())
+@patch("src.main.asyncio.wait_for", side_effect=_raise_timeout)
 @patch("src.main.get_client")
-def test_timeout_emits_error_then_done(mock_get_client, mock_wait_for, app_client):
+def test_timeout_emits_error_then_done(mock_get_client, mock_wait_for, mock_to_thread, app_client):
     """Timeout path emits both structured error and terminal done events."""
     mock_get_client.return_value = MagicMock()
-    mock_wait_for.side_effect = asyncio.TimeoutError
 
     response = app_client.post("/chat", json={
         "query": "how is my portfolio doing?",
@@ -204,6 +295,7 @@ def test_timeout_emits_error_then_done(mock_get_client, mock_wait_for, app_clien
     events = _parse_sse_events(response)
     timeout_error = next(e for e in events if e["event"] == "error")
     assert timeout_error["data"]["code"] == "pipeline_timeout"
+    mock_to_thread.assert_called_once()
     assert events[-1]["event"] == "done"
     assert events[-1]["data"]["status"] == "error"
 

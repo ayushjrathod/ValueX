@@ -83,6 +83,7 @@ def track_and_log_metrics(
             "classifier_ms": metrics["classifier_ms"],
             "agent_ms": metrics["agent_ms"],
             "e2e_ms": e2e_ms,
+            "first_message_ms": metrics.get("first_message_ms"),
             "tokens": {"input": total_input, "output": total_output},
             "cost_usd": metrics["estimated_cost_usd"],
             "under_budget": cost < settings.cost_budget_usd if cost is not None else None,

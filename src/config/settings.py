@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from urllib.parse import urlparse
 
 from pydantic import ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -11,7 +10,7 @@ APP_ENVS: tuple[str, ...] = ("development", "production", "test")
 
 # Defaults when the matching env var is unset (field names are the env keys, uppercased).
 OPENAI_MODEL = "gpt-4o-mini"
-PIPELINE_TIMEOUT_S = 8.0
+PIPELINE_TIMEOUT_S = 12.0
 E2E_WARN_THRESHOLD_S = 6.0
 COST_BUDGET_USD = 0.05
 CLASSIFIER_TEMPERATURE = 0.1
@@ -58,9 +57,6 @@ class Settings(BaseSettings):
     app_env: str = "development"
     openai_api_key: str = ""
     openai_model: str = OPENAI_MODEL
-    database_url: str | None = None
-    pgvector_database_url: str | None = None
-    redis_url: str | None = None
     pipeline_timeout_s: float = PIPELINE_TIMEOUT_S
     e2e_warn_threshold_s: float = E2E_WARN_THRESHOLD_S
     cost_budget_usd: float = COST_BUDGET_USD
@@ -113,26 +109,6 @@ class Settings(BaseSettings):
     @classmethod
     def _normalize_openai_api_key(cls, value: object) -> str:
         return str(value or "").strip()
-
-    @field_validator("database_url", "pgvector_database_url", mode="before")
-    @classmethod
-    def _validate_postgres_url(cls, value: object, info) -> str | None:
-        database_url = str(value or "").strip() or None
-        if database_url:
-            parsed = urlparse(database_url)
-            if parsed.scheme not in ("postgresql", "postgres") or not parsed.netloc:
-                raise ValueError(f"{info.field_name.upper()} must be a valid PostgreSQL URL.")
-        return database_url
-
-    @field_validator("redis_url", mode="before")
-    @classmethod
-    def _validate_redis_url(cls, value: object) -> str | None:
-        redis_url = str(value or "").strip() or None
-        if redis_url:
-            parsed = urlparse(redis_url)
-            if parsed.scheme not in ("redis", "rediss") or not parsed.netloc:
-                raise ValueError("REDIS_URL must be a valid Redis URL.")
-        return redis_url
 
     @model_validator(mode="after")
     def _validate_production_requirements(self) -> Settings:

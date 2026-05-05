@@ -1,5 +1,5 @@
-import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Literal
 
 from openai import OpenAI
@@ -9,7 +9,7 @@ from src.config.settings import (
     TOP_HOLDINGS_COUNT,
     get_settings,
 )
-from src.tools.market_data import TOOL_FUNCTIONS, TOOL_SCHEMAS
+from src.tools.market_data import fetch_benchmark, fetch_prices
 from src.tools.metrics import (
     compute_benchmark_comparison,
     compute_concentration,
@@ -18,52 +18,56 @@ from src.tools.metrics import (
 
 logger = logging.getLogger(__name__)
 
-def _accum_usage(
-    response: object, inp: int, out: int,
-) -> tuple[int, int]:
-    usage = getattr(response, "usage", None)
-    if usage:
-        inp += getattr(usage, "input_tokens", 0)
-        out += getattr(usage, "output_tokens", 0)
-    return inp, out
+
+# Benchmark mapping 
+#
+# The classifier extracts an optional `index` entity ("S&P 500", "NASDAQ", ...)
+# and the user fixture stores `preferences.preferred_benchmark` in similar
+# human-friendly form. yfinance needs an ETF/symbol. Map names → symbols here
+# rather than having the LLM translate.
+
+_BENCHMARK_SYMBOLS: dict[str, str] = {
+    "S&P 500": "SPY",
+    "S&P500": "SPY",
+    "SP500": "SPY",
+    "SPX": "SPY",
+    "SPY": "SPY",
+    "NASDAQ": "QQQ",
+    "NASDAQ 100": "QQQ",
+    "NASDAQ-100": "QQQ",
+    "NASDAQ COMPOSITE": "QQQ",
+    "QQQ": "QQQ",
+    "FTSE": "ISF.L",
+    "FTSE 100": "ISF.L",
+    "RUSSELL 2000": "IWM",
+    "IWM": "IWM",
+    "MSCI WORLD": "URTH",
+    "URTH": "URTH",
+    "NIKKEI": "1321.T",
+    "NIKKEI 225": "1321.T",
+    "DOW": "DIA",
+    "DOW JONES": "DIA",
+    "DJIA": "DIA",
+}
 
 
-TOOL_FETCH_PROMPT = """\
-You are Valura's market-data fetcher for portfolio health checks.
-Your ONLY job is to call the right tools to gather data. Do NOT analyse it.
+def _benchmark_symbol(name: str | None) -> str | None:
+    if not name:
+        return None
+    key = name.upper().strip()
+    return _BENCHMARK_SYMBOLS.get(key, name)
 
-RULES:
-1. Broad health check ("how is my portfolio?"):
-   → get_current_prices with ALL portfolio tickers
-   → get_benchmark_return with the user's preferred benchmark, period "1y"
-   → Make BOTH calls in the SAME round.
-
-2. Focused follow-up about specific tickers ("tell me about AAPL"):
-   → get_current_prices with ONLY those tickers.
-   → If the question is about concentration or diversification, fetch ALL tickers.
-   → Call get_benchmark_return if benchmark comparison is relevant.
-
-3. Skip fetches when conversation history already has the data.
-
-4. After calling tools, reply briefly — analysis is handled separately.\
-"""
 
 OBSERVATION_PROMPT = """\
-You are Valura's Portfolio Health Check agent. You speak to novice investors in
-plain, jargon-free language.
+Valura's Portfolio Health agent. Audience: novice investors. Plain language, no jargon.
 
-You are given fixed portfolio metrics from the server. Write
-1-5 plain-language observations about what matters most.
-
-Rules:
-- "warning" severity for risks and problems.
-- "info" severity for positive or neutral findings.
-- Each observation is 1-2 sentences max.
-- Reference specific numbers from the computed metrics.
-- For focused follow-ups, emphasise the requested ticker(s).
-- Never guarantee returns or make predictions.
-- Use the user's base currency for monetary references.
-- If the portfolio is empty, suggest diversified low-cost index funds.\
+Given fixed metrics, write 1-5 short observations on what matters most.
+- severity: "warning" for risks, "info" for neutral/positive
+- 1-2 sentences each; cite specific numbers from the metrics
+- focus_tickers (when set) take priority
+- never guarantee returns or predict
+- use the user's base currency
+- empty portfolio: suggest diversified low-cost index funds\
 """
 
 _DISCLAIMER = (
@@ -101,6 +105,7 @@ def run(
     model: str | None = None,
     history: list[dict[str, str]] | None = None,
     focus_tickers: list[str] | None = None,
+    benchmark_hint: str | None = None,
 ) -> dict[str, Any]:
     settings = get_settings()
     model_name = model or settings.openai_model
@@ -109,8 +114,8 @@ def run(
     if not positions:
         return _handle_empty_portfolio(user, query, client, model_name, history)
 
-    fetched_prices, fetched_currencies, benchmark_data, fetch_in, fetch_out = _fetch_market_data(
-        user, query, client, model_name, history, positions,
+    fetched_prices, fetched_currencies, benchmark_data = _prefetch_market_data(
+        user, positions, focus_tickers, benchmark_hint,
     )
 
     concentration = compute_concentration(positions, fetched_prices, currency_map=fetched_currencies)
@@ -143,93 +148,54 @@ def run(
     result["agent"] = "portfolio_health"
     result["disclaimer"] = _DISCLAIMER
     result["_meta"] = {
-        "input_tokens": fetch_in + obs_in,
-        "output_tokens": fetch_out + obs_out,
+        "input_tokens": obs_in,
+        "output_tokens": obs_out,
     }
     return result
 
 
-def _fetch_market_data(
+def _prefetch_market_data(
     user: dict[str, Any] | None,
-    query: str | None,
-    client: OpenAI,
-    model_name: str,
-    history: list[dict[str, str]] | None,
     positions: list[dict[str, Any]],
-) -> tuple[dict[str, float], dict[str, str], dict[str, Any] | None, int, int]:
-    user_context = _build_tool_context(user, positions)
+    focus_tickers: list[str] | None,
+    benchmark_hint: str | None,
+) -> tuple[dict[str, float], dict[str, str], dict[str, Any] | None]:
+    """Run price + benchmark fetches in parallel.
 
-    input_items: list[Any] = [
-        {"role": "system", "content": TOOL_FETCH_PROMPT},
-    ]
-    if history:
-        input_items.extend(history)
+    The LLM does not need to "decide" what to fetch — the classifier already
+    extracted any focus tickers / benchmark hints, and the user's preferred
+    benchmark is in their profile. Skip the tool-calling round-trip entirely.
+    """
+    tickers = list(focus_tickers) if focus_tickers else [p["ticker"] for p in positions]
 
-    user_msg = user_context
-    if query:
-        user_msg = f"User query: {query}\n\n{user_context}"
-    input_items.append({"role": "user", "content": user_msg})
+    user_pref = (user or {}).get("preferences", {}).get("preferred_benchmark")
+    benchmark = _benchmark_symbol(benchmark_hint) or _benchmark_symbol(user_pref)
 
     fetched_prices: dict[str, float] = {}
     fetched_currencies: dict[str, str] = {}
     benchmark_data: dict[str, Any] | None = None
-    inp_tok, out_tok = 0, 0
-    settings = get_settings()
-    tool_cache: dict[tuple[str, str], str] = {}
 
-    for round_num in range(settings.portfolio_max_tool_rounds):
-        response = client.responses.create(
-            model=model_name,
-            input=input_items,
-            tools=TOOL_SCHEMAS,
-            store=False,
-            temperature=settings.portfolio_tool_temperature,
-        )
-        inp_tok, out_tok = _accum_usage(response, inp_tok, out_tok)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        prices_future = pool.submit(fetch_prices, tickers)
+        bench_future = pool.submit(fetch_benchmark, benchmark, "1y") if benchmark else None
 
-        tool_calls = [
-            item
-            for item in response.output
-            if getattr(item, "type", None) == "function_call"
-        ]
-        if not tool_calls:
-            break
+        prices_result = prices_future.result()
+        for ticker, info in prices_result.items():
+            if isinstance(info, dict) and "price" in info:
+                fetched_prices[ticker] = info["price"]
+                fetched_currencies[ticker] = info.get("currency", "USD")
 
-        logger.info("Agent round %d: %d tool call(s)", round_num + 1, len(tool_calls))
-
-        for item in response.output:
-            input_items.append(item)
-
-        for call in tool_calls:
-            cache_key = (call.name, call.arguments)
-            if cache_key in tool_cache:
-                tool_result = tool_cache[cache_key]
-                logger.debug("Tool dedup hit: %s", call.name)
+        if bench_future is not None:
+            bench_result = bench_future.result()
+            if "error" not in bench_result:
+                benchmark_data = bench_result
             else:
-                tool_result = _execute_tool(call.name, call.arguments)
-                tool_cache[cache_key] = tool_result
-            logger.info("Tool %s -> %s", call.name, tool_result[:200])
-            input_items.append({
-                "type": "function_call_output",
-                "call_id": call.call_id,
-                "output": tool_result,
-            })
+                logger.info("Benchmark fetch failed for %s: %s", benchmark, bench_result["error"])
 
-            parsed = json.loads(tool_result)
-            if call.name == "get_current_prices":
-                for ticker, info in parsed.items():
-                    if isinstance(info, dict) and "price" in info:
-                        fetched_prices[ticker] = info["price"]
-                        fetched_currencies[ticker] = info.get("currency", "USD")
-            elif call.name == "get_benchmark_return" and "error" not in parsed:
-                benchmark_data = parsed
-    else:
-        logger.warning("Tool loop exhausted %d rounds", settings.portfolio_max_tool_rounds)
-
-    return fetched_prices, fetched_currencies, benchmark_data, inp_tok, out_tok
+    return fetched_prices, fetched_currencies, benchmark_data
 
 
-# Observation generation
+# Observation generation  ----------------------------------------------------
 
 
 def _generate_observations(
@@ -255,20 +221,20 @@ def _generate_observations(
     user_brief = _build_user_brief(user)
     settings = get_settings()
 
-    input_items: list[Any] = [
-        {"role": "system", "content": OBSERVATION_PROMPT},
-    ]
+    parts: list[str] = []
     if history:
         prior = [m["content"] for m in history if m.get("role") == "user"]
         if prior:
-            ctx = "Recent conversation:\n" + "\n".join(
-                f"- {q}" for q in prior[-settings.portfolio_recent_history_turns:]
-            )
-            input_items.append({"role": "user", "content": ctx})
-            input_items.append({"role": "assistant", "content": "Understood."})
+            recent = prior[-settings.portfolio_recent_history_turns:]
+            parts.append("recent: " + " | ".join(recent))
+    parts.append(f"query: {query or 'portfolio health check'}")
+    parts.append(user_brief)
+    parts.append(metrics_block)
 
-    msg = f"User query: {query or 'portfolio health check'}\n\n{user_brief}\n\n{metrics_block}"
-    input_items.append({"role": "user", "content": msg})
+    input_items: list[Any] = [
+        {"role": "system", "content": OBSERVATION_PROMPT},
+        {"role": "user", "content": "\n\n".join(parts)},
+    ]
 
     response = client.responses.parse(
         model=model_name,
@@ -281,6 +247,16 @@ def _generate_observations(
 
     parsed = _parse_observations(response)
     return [obs.model_dump() for obs in parsed.observations], inp_tok, out_tok
+
+
+def _accum_usage(
+    response: object, inp: int, out: int,
+) -> tuple[int, int]:
+    usage = getattr(response, "usage", None)
+    if usage:
+        inp += getattr(usage, "input_tokens", 0)
+        out += getattr(usage, "output_tokens", 0)
+    return inp, out
 
 
 def _handle_empty_portfolio(
@@ -305,33 +281,13 @@ def _handle_empty_portfolio(
     }
 
 
-def _build_tool_context(
-    user: dict[str, Any] | None,
-    positions: list[dict[str, Any]],
-) -> str:
-    if user is None:
-        return "No user profile linked."
-
-    tickers = [p["ticker"] for p in positions]
-    benchmark = user.get("preferences", {}).get("preferred_benchmark", "S&P 500")
-
-    return (
-        f"User: {user.get('name', 'Unknown')}, "
-        f"Country: {user.get('country', 'N/A')}, "
-        f"Base currency: {user.get('base_currency', 'USD')}.\n"
-        f"Preferred benchmark: {benchmark}\n"
-        f"Portfolio tickers ({len(tickers)}): {', '.join(tickers)}"
-    )
-
-
 def _build_user_brief(user: dict[str, Any] | None) -> str:
     if user is None:
-        return "User: Unknown (no profile linked)"
+        return "user: unknown"
     return (
-        f"User: {user.get('name', 'Unknown')}, Age: {user.get('age', 'N/A')}, "
-        f"Country: {user.get('country', 'N/A')}, "
-        f"Risk profile: {user.get('risk_profile', 'N/A')}, "
-        f"Base currency: {user.get('base_currency', 'USD')}."
+        f"user: {user.get('name', 'Unknown')} | age {user.get('age', 'N/A')} | "
+        f"{user.get('country', 'N/A')} | risk={user.get('risk_profile', 'N/A')} | "
+        f"base_ccy={user.get('base_currency', 'USD')}"
     )
 
 
@@ -344,13 +300,13 @@ def _format_metrics_for_llm(
     focus_tickers: list[str] | None,
     fetched_currencies: dict[str, str] | None = None,
 ) -> str:
-    lines = ["=== METRICS (authoritative; stick to these figures) ===\n"]
+    lines = ["METRICS (authoritative — stick to these numbers):"]
 
     if not positions:
-        lines.append("Portfolio: EMPTY — no positions held.")
+        lines.append("portfolio: EMPTY")
         return "\n".join(lines)
 
-    lines.append("Holdings (current market data):")
+    lines.append("holdings:")
     for p in positions:
         ticker = p["ticker"]
         qty = p["quantity"]
@@ -359,57 +315,42 @@ def _format_metrics_for_llm(
         ccy = (fetched_currencies or {}).get(ticker) or p.get("currency", "USD")
         if price is not None:
             ret = ((price - cost) / cost) * 100.0
-            current_val = qty * price
-            cost_val = qty * cost
             lines.append(
-                f"  {ticker}: {qty} shares, cost {cost:.2f} {ccy}, "
-                f"current {price:.2f} {ccy} ({ret:+.1f}%), "
-                f"value {current_val:,.0f} {ccy} (cost basis {cost_val:,.0f} {ccy})"
+                f"  {ticker} qty={qty} cost={cost:.2f} px={price:.2f} ret={ret:+.1f}% {ccy}"
             )
         else:
-            lines.append(f"  {ticker}: {qty} shares, cost {cost:.2f} {ccy}, current price unavailable")
+            lines.append(f"  {ticker} qty={qty} cost={cost:.2f} {ccy} (no live price)")
 
     if focus_tickers:
-        lines.append(f"\nFocused analysis on: {', '.join(focus_tickers)}")
+        lines.append(f"focus: {', '.join(focus_tickers)}")
 
     if concentration:
-        top = concentration.get("top_ticker", "unknown")
-        lines.append(f"\nConcentration Risk (by current market value):")
-        lines.append(f"  Largest position ({top}): {concentration['top_position_pct']}%")
-        lines.append(f"  Top {TOP_HOLDINGS_COUNT} positions: {concentration['top_3_positions_pct']}%")
-        lines.append(f"  Flag: {concentration['flag']}")
-        if concentration.get("notes"):
-            lines.append(f"  Note: {concentration['notes']}")
+        top = concentration.get("top_ticker", "?")
+        notes = f" | {concentration['notes']}" if concentration.get("notes") else ""
+        lines.append(
+            f"concentration: top={top} {concentration['top_position_pct']}% / "
+            f"top{TOP_HOLDINGS_COUNT}={concentration['top_3_positions_pct']}% / "
+            f"flag={concentration['flag']}{notes}"
+        )
 
     if performance:
-        scope = f"for {', '.join(focus_tickers)}" if focus_tickers else "overall"
-        lines.append(f"\nPerformance ({scope}):")
-        lines.append(f"  Total return: {performance['total_return_pct']}%")
-        if performance.get("annualized_return_pct") is not None:
-            lines.append(f"  Annualized return: {performance['annualized_return_pct']}%")
-        if performance.get("notes"):
-            lines.append(f"  Note: {performance['notes']}")
+        scope = "/".join(focus_tickers) if focus_tickers else "overall"
+        ann = performance.get("annualized_return_pct")
+        ann_str = f" annualized={ann}%" if ann is not None else ""
+        notes = f" | {performance['notes']}" if performance.get("notes") else ""
+        lines.append(
+            f"performance ({scope}): total={performance['total_return_pct']}%{ann_str}{notes}"
+        )
 
     if benchmark_comparison:
-        lines.append(f"\nBenchmark Comparison:")
-        lines.append(f"  Benchmark: {benchmark_comparison['benchmark']}")
-        lines.append(f"  Benchmark return: {benchmark_comparison['benchmark_return_pct']}%")
-        lines.append(f"  Portfolio return: {benchmark_comparison['portfolio_return_pct']}%")
-        lines.append(f"  Alpha: {benchmark_comparison['alpha_pct']}%")
+        lines.append(
+            f"benchmark: {benchmark_comparison['benchmark']} "
+            f"bench={benchmark_comparison['benchmark_return_pct']}% "
+            f"port={benchmark_comparison['portfolio_return_pct']}% "
+            f"alpha={benchmark_comparison['alpha_pct']}%"
+        )
 
     return "\n".join(lines)
-
-
-def _execute_tool(name: str, arguments: str) -> str:
-    func = TOOL_FUNCTIONS.get(name)
-    if func is None:
-        return json.dumps({"error": f"Unknown tool: {name}"})
-    try:
-        args = json.loads(arguments)
-        return func(**args)
-    except Exception as exc:
-        logger.warning("Tool execution error for %s: %s", name, exc)
-        return json.dumps({"error": f"Tool {name} failed: {str(exc)}"})
 
 
 def _parse_observations(response: object) -> ObservationsResult:

@@ -4,58 +4,42 @@ from typing import Literal
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
+from src.agents.catalog import AgentName, render_agent_taxonomy
 from src.config.settings import get_settings
+from src.utils.ttl_cache import TTLCache
 
 logger = logging.getLogger(__name__)
 
 
-AgentName = Literal[
-    "portfolio_health",
-    "market_research",
-    "investment_strategy",
-    "financial_planning",
-    "financial_calculator",
-    "risk_assessment",
-    "product_recommendation",
-    "predictive_analysis",
-    "customer_support",
-    "general_query",
-]
+# Process-wide dedupe for identical (query, session-context) pairs. The
+# classifier is deterministic for a given input — repeating the LLM call
+# burns ~3-4s and ~2k input tokens per duplicate. 5min TTL is far longer
+# than any reasonable user think-time, but short enough that long-lived
+# servers don't hold stale entries indefinitely.
+_CLASSIFIER_CACHE_TTL_S = 300.0
+_classifier_cache = TTLCache(_CLASSIFIER_CACHE_TTL_S, _CLASSIFIER_CACHE_TTL_S)
+
+
+def clear_classifier_cache() -> None:
+    """Reset the dedupe cache. Test fixtures call this for isolation."""
+    _classifier_cache.clear()
+
 CLASSIFIER_SYSTEM_PROMPT = """
-You are Valura's financial intent classifier.
+You are Valura's financial intent classifier. Pick the single best agent,
+write a 2-5 word intent label, extract only entities explicitly present
+or strongly implied, and give an informational safety_verdict.
 
-Return the single best agent, a short intent label, extract only entities
-explicitly present or strongly implied by the user query, and provide an
-informational safety verdict. For multi-intent queries, choose the primary
-intent. For greetings, definitions, educational questions, conversational
-messages, and gibberish, use general_query.
+Use general_query for greetings, definitions, education, chatter, gibberish.
+Use prior conversation (if given) to resolve follow-ups ("my portfolio", "that stock").
+Use null for entity fields not present. Do not invent values.
 
-If prior conversation context is provided, use it to resolve follow-up references
-(e.g. pronouns, "my portfolio", "that stock") to the correct agent and entities.
+Agents:
+{agent_taxonomy}
 
-Agent taxonomy:
-- portfolio_health: portfolio assessment, concentration, performance, benchmarking.
-- market_research: factual/recent info about instruments, sectors, indices, or market events.
-- investment_strategy: buy/sell/hold/hedge/rebalance, allocation, or advice.
-- financial_planning: retirement, savings, FIRE, education, house, emergency fund goals.
-- financial_calculator: deterministic calculations, DCA, mortgage, tax, future value, FX.
-- risk_assessment: risk metrics, exposure, stress tests, what-if scenarios.
-- product_recommendation: specific ETFs, funds, or products matching a profile/theme.
-- predictive_analysis: forecasts, projections, future value, trend extrapolation.
-- customer_support: account, login, transactions, linked bank, app usage issues.
-- general_query: education, definitions, greetings, conversation, unrelated/gibberish.
-
-Use null for entity fields that are not present. Do not invent missing values.
-
-For `intent`, write a concise 2-5 word label describing the user's intent
-(e.g. "portfolio health check", "stock price lookup", "retirement planning").
-
-For `safety_verdict`, assess whether the query touches harmful financial topics
-(insider trading, market manipulation, money laundering, guaranteed returns,
-reckless advice, sanctions evasion, fraud). Return "safe" for normal queries,
-or a brief category label if the query is borderline.
-This verdict is informational only — it does NOT block the request.
-""".strip()
+safety_verdict: "safe" for normal queries; otherwise a brief category label
+(insider_trading, market_manipulation, money_laundering, guaranteed_returns,
+reckless_advice, sanctions_evasion, fraud). Informational only — does NOT block.
+""".strip().format(agent_taxonomy=render_agent_taxonomy())
 
 
 class ClassificationError(RuntimeError):
@@ -198,6 +182,22 @@ _FALLBACK_ENTITIES = ClassificationEntities(
 )
 
 
+_HISTORY_LOOKBACK_TURNS = 3
+
+
+def _cache_key(query: str, session_history: list[dict[str, str]] | None) -> tuple:
+    """Stable, hashable key over query + recent context."""
+    norm = query.strip().lower()
+    if not session_history:
+        return (norm, ())
+    recent_user_queries = tuple(
+        msg["content"]
+        for msg in session_history
+        if msg.get("role") == "user"
+    )[-_HISTORY_LOOKBACK_TURNS:]
+    return (norm, recent_user_queries)
+
+
 def classify(
     query: str,
     *,
@@ -206,10 +206,20 @@ def classify(
 ) -> ClassificationResult:
     """Classify a user query with OpenAI structured outputs.
 
-    On LLM failure, returns a fallback classification routed to general_query
+    Identical (query, recent-context) pairs hit a process-wide TTL cache and
+    skip the LLM call entirely. On LLM failure, falls back to general_query
     rather than crashing the request.
     """
     settings = get_settings()
+
+    key = _cache_key(query, session_history)
+    cached = _classifier_cache.get(key)
+    if cached is not None:
+        # Cache hit: zero out token usage so cost metrics don't double-count
+        # the original LLM call. Pydantic copy preserves all public fields.
+        clone = cached.model_copy()
+        clone._token_usage = None
+        return clone
 
     messages: list[dict[str, str]] = [
         {"role": "system", "content": CLASSIFIER_SYSTEM_PROMPT},
@@ -218,7 +228,7 @@ def classify(
     if session_history:
         prior_queries = [
             msg["content"] for msg in session_history if msg.get("role") == "user"
-        ]
+        ][-_HISTORY_LOOKBACK_TURNS:]
         if prior_queries:
             context_block = "Prior user queries in this session:\n" + "\n".join(
                 f"- {q}" for q in prior_queries
@@ -253,6 +263,7 @@ def classify(
     if isinstance(inp, int) and inp > 0:
         result._token_usage = (inp, out)
 
+    _classifier_cache.set(key, result)
     return result
 
 

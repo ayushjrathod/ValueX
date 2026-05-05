@@ -75,3 +75,16 @@ def mock_llm():
             ...
     """
     return MagicMock()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_caches():
+    """Clear process-wide TTL caches between tests so cache hits don't leak."""
+    from src.classifier.classifier import clear_classifier_cache
+    from src.tools.market_data import clear_market_data_cache
+
+    clear_classifier_cache()
+    clear_market_data_cache()
+    yield
+    clear_classifier_cache()
+    clear_market_data_cache()

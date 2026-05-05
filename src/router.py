@@ -6,6 +6,8 @@ from typing import Any
 
 from openai import OpenAI
 
+from src.agents.contracts import AgentRequest
+from src.agents.registry import AGENT_REGISTRY, build_not_implemented_response
 from src.classifier.classifier import ClassificationResult
 
 
@@ -25,21 +27,17 @@ def route(
     *query* and *history* are forwarded to the agent for follow-up
     resolution via session memory.
     """
-    agent = classification.agent
-
-    if agent == "portfolio_health":
-        from src.agents.portfolio_health import run
-
-        focus_tickers = classification.entities_dict().get("tickers")
-        return run(
-            user=user, client=client, model=model,
-            query=query, history=history, focus_tickers=focus_tickers,
-        )
-
-    return {
-        "status": "not_implemented",
-        "intent": classification.intent,
-        "agent": agent,
-        "entities": classification.entities_dict(),
-        "message": f"The {agent} agent is not implemented in this build.",
-    }
+    request = AgentRequest(
+        agent=classification.agent,
+        intent=classification.intent,
+        entities=classification.entities_dict(),
+        user=user,
+        client=client,
+        model=model,
+        query=query,
+        history=history,
+    )
+    handler = AGENT_REGISTRY.get(request.agent)
+    if handler is None:
+        return build_not_implemented_response(request).to_payload()
+    return handler(request).to_payload()
