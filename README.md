@@ -2,7 +2,7 @@
 
 [![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-22041afd0340ce965d47ae6ef1cefeee28c7c493a6346c4f15d667ab976d596c.svg)](https://classroom.github.com/a/SHM9MYZJ)
 
-**Video:** _[TODO: add link]_
+**Video:** [https://youtu.be/LG1QROO0Css](https://youtu.be/LG1QROO0Css)
 
 This project is a FastAPI service that answers retail-investor questions over Server-Sent Events. The request path is simple: block clearly unsafe finance queries locally, classify the safe ones with one structured LLM call, route them through a thin registry, and let the target agent respond in a predictable format.
 
