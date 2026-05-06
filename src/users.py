@@ -29,3 +29,26 @@ def get_user(user_id: str) -> dict[str, Any] | None:
     return _cache.get(user_id)
 
 
+def list_users() -> list[dict[str, Any]]:
+    """Return lightweight summaries for all available fixture users."""
+    _load_all()
+
+    users: list[dict[str, Any]] = []
+    for user in _cache.values():
+        positions = user.get("positions", [])
+        preferences = user.get("preferences", {})
+        users.append(
+            {
+                "user_id": user["user_id"],
+                "name": user.get("name", "Unknown"),
+                "country": user.get("country"),
+                "risk_profile": user.get("risk_profile"),
+                "base_currency": user.get("base_currency"),
+                "positions_count": len(positions),
+                "preferred_benchmark": preferences.get("preferred_benchmark"),
+            }
+        )
+
+    return sorted(users, key=lambda user: user["name"])
+
+

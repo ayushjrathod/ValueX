@@ -10,7 +10,7 @@ APP_ENVS: tuple[str, ...] = ("development", "production", "test")
 
 # Defaults when the matching env var is unset (field names are the env keys, uppercased).
 OPENAI_MODEL = "gpt-4o-mini"
-PIPELINE_TIMEOUT_S = 12.0
+PIPELINE_TIMEOUT_S = 50.0
 E2E_WARN_THRESHOLD_S = 6.0
 COST_BUDGET_USD = 0.05
 CLASSIFIER_TEMPERATURE = 0.1
@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     )
 
     app_env: str = "development"
+    llm: str = "openai"
+    google_cloud_project: str = ""
+    google_cloud_region: str = "global"
+    gemini_model_id: str = "gemini-1.5-flash"
     openai_api_key: str = ""
     openai_model: str = OPENAI_MODEL
     pipeline_timeout_s: float = PIPELINE_TIMEOUT_S
@@ -87,6 +91,16 @@ class Settings(BaseSettings):
         if not self.openai_api_key:
             raise ConfigError("OPENAI_API_KEY is required for LLM-backed features.")
         return self.openai_api_key
+
+    @field_validator("llm", mode="before")
+    @classmethod
+    def _normalize_llm(cls, value: object) -> str:
+        llm = str(value or "openai").strip().lower()
+        if llm == "gemini":
+            llm = "gcp"
+        if llm not in ("openai", "gcp"):
+            raise ValueError("LLM must be one of: openai, gcp, gemini.")
+        return llm
 
     @field_validator("app_env", mode="before")
     @classmethod

@@ -43,6 +43,15 @@ def _make_obs_response() -> MagicMock:
     return resp
 
 
+def _make_user_summary_response(summary: str = "Aggressive investor with a concentrated US equity portfolio.") -> MagicMock:
+    result = MagicMock()
+    result.summary = summary
+    resp = MagicMock()
+    resp.output_parsed = result
+    resp.output = []
+    return resp
+
+
 def _parse_sse_events(response) -> list[dict]:
     """Parse SSE text into a list of {event, data} dicts."""
     events = []
@@ -122,6 +131,45 @@ def test_missing_api_key_returns_error(mock_get_client, app_client):
     assert error_events[0]["data"]["code"] == "llm_unavailable"
 
 
+def test_users_endpoint_lists_available_fixture_users(app_client):
+    """The users endpoint exposes the available fixture users for the frontend."""
+    response = app_client.get("/users")
+
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["status"] == "success"
+    assert payload["status_code"] == 200
+    assert isinstance(payload["users"], list)
+    assert len(payload["users"]) >= 3
+
+    first_user = payload["users"][0]
+    assert "user_id" in first_user
+    assert "name" in first_user
+    assert "positions_count" in first_user
+
+
+@patch("src.main.get_client")
+def test_user_summary_endpoint_returns_llm_summary(mock_get_client, app_client):
+    mock_client = MagicMock()
+    mock_client.responses.parse.return_value = _make_user_summary_response()
+    mock_get_client.return_value = mock_client
+
+    response = app_client.get("/user-summary", params={"user_id": "usr_001"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "success"
+    assert payload["user_id"] == "usr_001"
+    assert "summary" in payload
+
+
+def test_user_summary_endpoint_404s_for_unknown_user(app_client):
+    response = app_client.get("/user-summary", params={"user_id": "usr_missing"})
+
+    assert response.status_code == 404
+
+
 @patch("src.main.classify")
 @patch("src.main.get_client")
 def test_stub_agent_event_flow(mock_get_client, mock_classify, app_client):
@@ -175,7 +223,7 @@ def test_stub_agent_response_is_persisted_for_session_followups(mock_get_client,
 
 
 @patch("src.main.get_client")
-def test_classifier_fallback_routes_to_general_query_stub(mock_get_client, app_client):
+def test_classifier_fallback_routes_to_general_query_handler(mock_get_client, app_client):
     """Classifier API failures should downgrade to general_query and still complete the pipeline."""
     mock_client = MagicMock()
     mock_client.responses.parse.side_effect = RuntimeError("API down")
@@ -200,8 +248,9 @@ def test_classifier_fallback_routes_to_general_query_stub(mock_get_client, app_c
     assert classifier_meta["data"]["agent"] == "general_query"
 
     msg = next(e for e in events if e["event"] == "message")
-    assert msg["data"]["status"] == "not_implemented"
+    assert msg["data"]["status"] == "ok"
     assert msg["data"]["agent"] == "general_query"
+    assert msg["data"]["message"]
 
 
 @patch("src.main.classify")

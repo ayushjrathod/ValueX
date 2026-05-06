@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -16,7 +17,7 @@ from src.config import get_settings
 from src.router import route
 from src.safety.guard import check, warm_load as warm_safety_model
 from src.session import get_session_store
-from src.users import get_user
+from src.users import get_user, list_users
 from src.utils.llm import get_client
 from src.utils.tracking import track_and_log_metrics
 
@@ -29,6 +30,10 @@ class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1)
     user_id: str | None = None
     session_id: str | None = None
+
+
+class UserSummaryResponse(BaseModel):
+    summary: str = Field(..., min_length=1)
 
 
 async def lifespan(app: FastAPI):
@@ -91,6 +96,39 @@ async def health():
             "status": "success",
             "status_code": 200,
             "message": "API is healthy!",
+        }
+    )
+
+
+@app.get("/users")
+async def users():
+    return JSONResponse(
+        content={
+            "status": "success",
+            "status_code": 200,
+            "users": list_users(),
+        }
+    )
+
+
+@app.get("/user-summary")
+async def user_summary(user_id: str):
+    user = get_user(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail=f"Unknown user_id: {user_id}")
+
+    try:
+        llm_client = get_client()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    summary = await asyncio.to_thread(_summarize_user, user, llm_client)
+    return JSONResponse(
+        content={
+            "status": "success",
+            "status_code": 200,
+            "user_id": user_id,
+            "summary": summary,
         }
     )
 
@@ -312,6 +350,45 @@ def _timeout_event(elapsed_s: float) -> dict[str, str]:
 
 def sse_event(event: str, data: dict) -> dict[str, str]:
     return {"event": event, "data": json.dumps(data)}
+
+
+def _summarize_user(user: dict[str, Any], llm_client: Any) -> str:
+    positions = user.get("positions", [])
+    top_holdings = ", ".join(position.get("ticker", "?") for position in positions[:5]) or "none"
+    prompt = "\n".join(
+        [
+            f"name: {user.get('name', 'Unknown')}",
+            f"country: {user.get('country', 'N/A')}",
+            f"risk_profile: {user.get('risk_profile', 'N/A')}",
+            f"base_currency: {user.get('base_currency', 'N/A')}",
+            f"positions_count: {len(positions)}",
+            f"preferred_benchmark: {user.get('preferences', {}).get('preferred_benchmark', 'N/A')}",
+            f"top_holdings: {top_holdings}",
+        ]
+    )
+
+    response = llm_client.responses.parse(
+        model=settings.openai_model,
+        input=[
+            {
+                "role": "system",
+                "content": (
+                    "Write a concise, customer-facing summary of a fixture investor profile. "
+                    "Keep it to 2 sentences, plain English, no bullet points, and mention risk posture and portfolio shape."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        store=False,
+        text_format=UserSummaryResponse,
+    )
+
+    parsed = getattr(response, "output_parsed", None)
+    if parsed is not None:
+        result = UserSummaryResponse.model_validate(parsed)
+        return result.summary
+
+    raise RuntimeError("Could not parse user summary response.")
 
 
 if __name__ == "__main__":
