@@ -1,6 +1,4 @@
-# Valura AI
-
-[![Review Assignment Due Date](https://classroom.github.com/assets/deadline-readme-button-22041afd0340ce965d47ae6ef1cefeee28c7c493a6346c4f15d667ab976d596c.svg)](https://classroom.github.com/a/SHM9MYZJ)
+# ValueX
 
 **Video:** [https://youtu.be/LG1QROO0Css](https://youtu.be/LG1QROO0Css)
 
@@ -18,7 +16,7 @@ Every `/chat` request goes through a in house pre-trained, warm-loaded TF-IDF + 
 
 I stayed with a small local model because it is easy to reason about, fast enough to be effectively free in the request budget, and easier to tune than adding another LLM call just to say no. The main issue I hit was false positives on legitimate finance phrasing, not lack of model capacity. The fix was raising the block threshold to `0.58` after trial and error and adding safe examples that reuse the same vocabulary in training data the model was overreacting to.
 
-That tradeoff is deliberate: a lightweight model like this is not robust to every paraphrase, but for this assignment it gives a good balance of recall, latency, and debuggability.
+That tradeoff is deliberate: a lightweight model like this is not robust to every paraphrase, but it gives a good balance of recall, latency, and debuggability for this service.
 
 To load the pickle file for this model we need scikit-learn, which is a heavier dependency just for the safety model. I considered converting the model to a pure NumPy implementation or re-training with a smaller library, but in the end I decided that the convenience of using scikit-learn for this part outweighed the cost of adding it as a dependency.
 
@@ -75,7 +73,7 @@ The tradeoff is one less flashy architecture. There is no agentic tool loop here
 
 ### 5. Sessions and streaming are intentionally pragmatic
 
-Session history is stored in a process-local, thread-safe in-memory store with a 1-hour TTL and a 10-turn cap. That is not production infrastructure, and I am not pretending it is. I did not use a database here because the assignment only needs short-lived conversational memory for follow-up resolution inside a single service instance. A database would add setup, persistence, schema decisions, and operational complexity without improving the core things this project is trying to prove: safe gating, correct routing, deterministic portfolio analysis, and observable SSE behavior. For this scope, in-memory state is the simplest thing that supports follow-up questions well enough.
+Session history is stored in a process-local, thread-safe in-memory store with a 1-hour TTL and a 10-turn cap. That is not production infrastructure, and I am not pretending it is. I kept it in memory because this service only needs short-lived conversational memory for follow-up resolution inside a single service instance. A database would add setup, persistence, schema decisions, and operational complexity without improving the core things this project is trying to prove: safe gating, correct routing, deterministic portfolio analysis, and observable SSE behavior. For this scope, in-memory state is the simplest thing that supports follow-up questions well enough.
 
 Two choices matter here:
 
@@ -94,11 +92,11 @@ Finance users will forgive a stubbed capability faster than they forgive obvious
 
 ### Thin infrastructure over premature abstraction
 
-This repo uses a small registry, a simple in-memory session store, and in-memory TTL caches. That is not because Redis, Celery, or a larger orchestration layer are bad ideas. It is because the current assignment does not need them to prove the important spine of architecture.
+This repo uses a small registry, a simple in-memory session store, and in-memory TTL caches. That is not because Redis, Celery, or a larger orchestration layer are bad ideas. It is because the current scope does not need them to prove the important spine of architecture.
 
 ### Why I skipped most of the stretch goals
 
-The assignment lists four optional stretches. I implemented one and deliberately skipped the other three.
+There were four obvious extension paths. I implemented one and deliberately skipped the other three.
 
 **Dedupe cache — implemented.** The classifier has a 5-minute process-local cache keyed on the query and the last 3 user turns. Repeated or near-identical requests skip the LLM entirely. This was cheap to build and directly helps with both latency and cost, so it was worth doing.
 
@@ -106,7 +104,7 @@ The assignment lists four optional stretches. I implemented one and deliberately
 
 **Per-tenant model selection — skipped.** The plumbing for this is straightforward — read a model override from the user profile and pass it through — but it is not a meaningful architectural decision. It is a config flag. I would rather spend the time on things that actually test the system's design, like making the portfolio agent produce trustworthy numbers.
 
-**Multi-tenant rate limiting — skipped.** Rate limiting matters in production but it is an infrastructure concern, not an AI architecture concern. Adding it here would mean pulling in Redis or a token-bucket library, writing middleware, and testing concurrency — all real work, but none of it exercises the safety, routing, or agent contracts that this assignment is actually evaluating.
+**Multi-tenant rate limiting — skipped.** Rate limiting matters in production but it is an infrastructure concern, not an AI architecture concern. Adding it here would mean pulling in Redis or a token-bucket library, writing middleware, and testing concurrency — all real work, but none of it exercises the safety, routing, or agent contracts that this project is actually centered on.
 
 ## Setup
 
@@ -153,7 +151,7 @@ That split is intentional. I did not want tests that only assert that mocks retu
 
 ## Libraries
 
-I used `fastapi` because the assignment requires it and it is a good fit for a small streaming API. `sse-starlette` handles the SSE response layer cleanly. `openai` is the official SDK and supports the structured output flow used by both the classifier and the observation-generation step. `pydantic` and `pydantic-settings` keep the codebase typed. `yfinance` gives live market data without forcing an evaluator to provision another API key. `scikit-learn` is enough for the small safety classifier.
+I used `fastapi` because it is a good fit for a small streaming API. `sse-starlette` handles the SSE response layer cleanly. `openai` is the official SDK and supports the structured output flow used by both the classifier and the observation-generation step. `pydantic` and `pydantic-settings` keep the codebase typed. `yfinance` gives live market data without forcing a reviewer to provision another API key. `scikit-learn` is enough for the small safety classifier.
 
 I intentionally did not add heavier infrastructure libraries just to make the stack look more serious. The simple cache and session layers are small enough to inspect and reason about directly.
 
@@ -204,7 +202,7 @@ One small artifact caveat is worth calling out directly: the summary row in `ben
 
 The remaining p95 problem is still mostly on the observation LLM call, not on the local parts of the pipeline. That is why the timeout is set to 12 seconds: it is long enough to survive typical tail latency, but still bounded enough to fail fast when upstream latency gets unreasonable.
 
-I have not load-tested concurrency yet. The current benchmark is sequential and warm-server only, which is good enough for assignment reporting but not enough to make production claims.
+I have not load-tested concurrency yet. The current benchmark is sequential and warm-server only, which is useful for reporting but not enough to make production claims.
 
 ## Known limits
 

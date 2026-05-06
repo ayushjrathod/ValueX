@@ -25,7 +25,7 @@ def clear_classifier_cache() -> None:
     _classifier_cache.clear()
 
 CLASSIFIER_SYSTEM_PROMPT = """
-You are Valura's financial intent classifier. Pick the single best agent,
+You are the ValueX financial intent classifier. Pick the single best agent,
 write a 2-5 word intent label, extract only entities explicitly present
 or strongly implied, and give an informational safety_verdict.
 

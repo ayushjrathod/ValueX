@@ -59,7 +59,7 @@ def _benchmark_symbol(name: str | None) -> str | None:
 
 
 OBSERVATION_PROMPT = """\
-Valura's Portfolio Health agent. Audience: novice investors. Plain language, no jargon.
+ValueX Portfolio Health agent. Audience: novice investors. Plain language, no jargon.
 
 Given fixed metrics, write 1-5 short observations on what matters most.
 - severity: "warning" for risks, "info" for neutral/positive

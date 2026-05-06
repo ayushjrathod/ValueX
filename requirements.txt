@@ -1,12 +1,12 @@
 # =============================================================================
-# Valura AI — Team Lead Assignment — Core Dependencies
+# ValueX Core Dependencies
 # =============================================================================
 # This is the minimal set we ship. Add what you need; justify additions in your README.
 
 # --- Web framework + streaming ---
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
-sse-starlette>=1.8.2       # SSE is required by the assignment; this is the path of least resistance
+sse-starlette>=1.8.2       # SSE transport for streaming responses
 httpx>=0.27.0              # async HTTP client + TestClient
 
 # --- Validation ---
@@ -37,5 +37,5 @@ scikit-learn>=1.4.0
 #   - pandas / numpy        — if your portfolio math gets non-trivial
 #   - asyncpg / aiosqlite   — only if you persist sessions in a real DB
 #   - tenacity              — if you implement retry policies
-#   - cachetools            — if you implement the optional dedupe cache
+#   - cachetools            — if you implement a shared dedupe cache
 # =============================================================================

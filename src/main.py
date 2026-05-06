@@ -41,8 +41,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Valura AI Agents API",
-    description="API for Valura AI Agents",
+    title="ValueX Agents API",
+    description="API for ValueX financial agents",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -80,7 +80,7 @@ async def root():
         content={
             "status": "success",
             "status_code": 200,
-            "message": "Welcome to the Valura AI Agents API!",
+            "message": "Welcome to the ValueX Agents API!",
         }
     )
 
