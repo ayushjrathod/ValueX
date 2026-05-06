@@ -1,6 +1,5 @@
 # ValueX
 
-**Video:** [https://youtu.be/LG1QROO0Css](https://youtu.be/LG1QROO0Css)
 
 This project is a FastAPI service that answers retail-investor questions over Server-Sent Events. The request path is simple: block clearly unsafe finance queries locally, classify the safe ones with one structured LLM call, route them through a thin registry, and let the target agent respond in a predictable format.
 
