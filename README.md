@@ -116,6 +116,15 @@ cp .env.example .env
 uvicorn src.main:app --reload --port 8000
 ```
 
+### Docker
+
+```bash
+docker build -t valuex-api .
+docker run --rm -p 8000:8000 --env-file .env valuex-api
+```
+
+The image starts the FastAPI backend with `uvicorn src.main:app` on port `8000`.
+
 ## Environment variables
 
 `OPENAI_API_KEY` is required at runtime for LLM-backed behavior. Without it, the server still starts, but `/chat` returns an `llm_unavailable` error event.
