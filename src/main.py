@@ -6,9 +6,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
+from src.agents.router import route
 from src.config import get_settings
+from src.services.chat import chat as chat_service
 from src.services.chat.models import ChatRequest
-from src.services.chat.chat import stream_chat_response
+from src.services.classifier.classifier import classify
 from src.services.safety.guard import warm_load as warm_safety_model
 from src.services.user_summary.user_summary import summarize_user
 from src.utils.llm import get_client
@@ -114,6 +116,16 @@ async def user_summary(user_id: str):
             "summary": summary,
         }
     )
+
+
+async def stream_chat_response(request: ChatRequest):
+    async for event in chat_service.stream_chat_response(
+        request,
+        get_client_fn=get_client,
+        classify_fn=classify,
+        route_fn=route,
+    ):
+        yield event
 
 
 @app.post("/chat")

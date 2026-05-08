@@ -1,6 +1,5 @@
 from src.agents.catalog import AgentName
 from src.agents.contracts import AgentHandler, AgentRequest, AgentResponse
-from src.agents.general_query import run as run_general_query
 from src.agents.market_research import run as run_market_research
 from src.agents.portfolio_health import run as run_portfolio_health
 
@@ -22,14 +21,9 @@ def _run_market_research(request: AgentRequest) -> AgentResponse:
     return run_market_research(request)
 
 
-def _run_general_query(request: AgentRequest) -> AgentResponse:
-    return run_general_query(request)
-
-
 AGENT_REGISTRY: dict[AgentName, AgentHandler] = {
     AgentName.PORTFOLIO_HEALTH: _run_portfolio_health,
     AgentName.MARKET_RESEARCH: _run_market_research,
-    AgentName.GENERAL_QUERY: _run_general_query,
 }
 
 

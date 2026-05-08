@@ -9,6 +9,21 @@ class UserSummaryResponse(BaseModel):
     summary: str = Field(..., min_length=1)
 
 
+def _extract_summary(parsed: Any) -> str | None:
+    if isinstance(parsed, UserSummaryResponse):
+        return parsed.summary
+
+    if isinstance(parsed, dict):
+        result = UserSummaryResponse.model_validate(parsed)
+        return result.summary
+
+    summary = getattr(parsed, "summary", None)
+    if isinstance(summary, str) and summary.strip():
+        return summary
+
+    return None
+
+
 def summarize_user(user: dict[str, Any], llm_client: Any) -> str:
     positions = user.get("positions", [])
     top_holdings = ", ".join(position.get("ticker", "?") for position in positions[:5]) or "none"
@@ -42,8 +57,9 @@ def summarize_user(user: dict[str, Any], llm_client: Any) -> str:
 
     parsed = getattr(response, "output_parsed", None)
     if parsed is not None:
-        result = UserSummaryResponse.model_validate(parsed)
-        return result.summary
+        summary = _extract_summary(parsed)
+        if summary is not None:
+            return summary
 
     raise RuntimeError("Could not parse user summary response.")
 

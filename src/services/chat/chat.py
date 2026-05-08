@@ -3,8 +3,12 @@ import json
 import logging
 import time
 from collections.abc import AsyncIterator
+from collections.abc import Callable
 from typing import Any
 
+from src.agents.catalog import AgentName
+from src.agents.contracts import AgentRequest
+from src.agents.general_query import run as run_general_query
 from src.agents.router import route
 from src.config import get_settings
 from src.services.chat.models import ChatRequest
@@ -23,6 +27,10 @@ settings = get_settings()
 
 async def stream_chat_response(
     request: ChatRequest,
+    *,
+    get_client_fn: Callable[[], Any] = get_client,
+    classify_fn: Callable[..., Any] = classify,
+    route_fn: Callable[..., dict[str, Any]] = route,
 ) -> AsyncIterator[dict[str, str]]:
     query = request.query
     user_id = request.user_id
@@ -72,7 +80,7 @@ async def stream_chat_response(
         )
         # Ensure LLM client is available
         try:
-            llm_client = get_client()
+            llm_client = get_client_fn()
         except RuntimeError:
             yield sse_event("error", {
                 "message": "LLM service unavailable. API_KEY is not configured.",
@@ -88,7 +96,7 @@ async def stream_chat_response(
         )
 
         classification = await asyncio.to_thread(
-            classify,
+            classify_fn,
             query,
             client=llm_client,
             session_history=history or None,
@@ -133,14 +141,27 @@ async def stream_chat_response(
             {"stage": "agent_dispatch", "agent": classification.agent},
         )
 
-        agent_response = await asyncio.to_thread(
-            route,
-            classification,
-            user=user,
-            client=llm_client,
-            query=query,
-            history=history,
-        )
+        if classification.agent == AgentName.GENERAL_QUERY:
+            agent_request = AgentRequest(
+                agent=classification.agent,
+                intent=classification.intent,
+                entities=classification.entities_dict(),
+                user=user,
+                client=llm_client,
+                query=query,
+                history=history,
+            )
+            agent = await asyncio.to_thread(run_general_query, agent_request)
+            agent_response = agent.to_payload()
+        else:
+            agent_response = await asyncio.to_thread(
+                route_fn,
+                classification,
+                user=user,
+                client=llm_client,
+                query=query,
+                history=history,
+            )
 
         t_agent = time.perf_counter()
         metrics["agent_ms"] = round(
