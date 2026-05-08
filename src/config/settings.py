@@ -10,7 +10,6 @@ APP_ENVS: tuple[str, ...] = ("development", "production", "test")
 
 # Defaults when the matching env var is unset (field names are the env keys, uppercased).
 OPENAI_MODEL = "gpt-4o-mini"
-PIPELINE_TIMEOUT_S = 50.0
 E2E_WARN_THRESHOLD_S = 6.0
 COST_BUDGET_USD = 0.05
 CLASSIFIER_TEMPERATURE = 0.1
@@ -61,7 +60,6 @@ class Settings(BaseSettings):
     gemini_model_id: str = "gemini-1.5-flash"
     openai_api_key: str = ""
     openai_model: str = OPENAI_MODEL
-    pipeline_timeout_s: float = PIPELINE_TIMEOUT_S
     e2e_warn_threshold_s: float = E2E_WARN_THRESHOLD_S
     cost_budget_usd: float = COST_BUDGET_USD
     classifier_temperature: float = CLASSIFIER_TEMPERATURE

@@ -4,10 +4,10 @@ import logging
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from src.config import get_settings
+from src.services.chat.models import ChatRequest
 from src.services.chat.chat import stream_chat_response
 from src.services.safety.guard import warm_load as warm_safety_model
 from src.services.user_summary.user_summary import summarize_user
@@ -116,20 +116,10 @@ async def user_summary(user_id: str):
     )
 
 
-class ChatRequest(BaseModel):
-    query: str = Field(..., min_length=1)
-    user_id: str | None = None
-    session_id: str | None = None
-
-
 @app.post("/chat")
 async def chat(request: ChatRequest):
     return EventSourceResponse(
-        stream_chat_response(
-            query=request.query,
-            user_id=request.user_id,
-            session_id=request.session_id,
-        )
+        stream_chat_response(request)
     )
 
 if __name__ == "__main__":

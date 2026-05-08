@@ -322,32 +322,6 @@ def test_full_pipeline_event_order(mock_get_client, mock_classify, mock_route, a
     assert done_event["data"]["status"] == "ok"
 
 
-async def _raise_timeout(awaitable, timeout):
-    if hasattr(awaitable, "close"):
-        awaitable.close()
-    raise TimeoutError
-
-
-@patch("src.main.asyncio.to_thread", return_value=object())
-@patch("src.main.asyncio.wait_for", side_effect=_raise_timeout)
-@patch("src.main.get_client")
-def test_timeout_emits_error_then_done(mock_get_client, mock_wait_for, mock_to_thread, app_client):
-    """Timeout path emits both structured error and terminal done events."""
-    mock_get_client.return_value = MagicMock()
-
-    response = app_client.post("/chat", json={
-        "query": "how is my portfolio doing?",
-    })
-    assert response.status_code == 200
-
-    events = _parse_sse_events(response)
-    timeout_error = next(e for e in events if e["event"] == "error")
-    assert timeout_error["data"]["code"] == "pipeline_timeout"
-    mock_to_thread.assert_called_once()
-    assert events[-1]["event"] == "done"
-    assert events[-1]["data"]["status"] == "error"
-
-
 def test_empty_query_rejected(app_client):
     """Empty queries are rejected by validation."""
     response = app_client.post("/chat", json={"query": ""})
