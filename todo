@@ -1,0 +1,6 @@
+[] database setup
+[] auth
+[] cors 
+[] unsafe pickle deserialization
+[] add rate limiting
+
