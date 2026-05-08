@@ -11,7 +11,7 @@
       "@/*": ["./src/*"]
     },
     "rootDir": ".",
-    "outDir": "build/",
+    "outDir": "dist/",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
