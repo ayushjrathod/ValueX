@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import ValidationError, field_validator, model_validator
+from pydantic import AliasChoices, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # APP_ENV must be one of these (see _normalize_app_env).
@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = SESSION_TTL_SECONDS
     safety_block_threshold: float = SAFETY_BLOCK_THRESHOLD
     market_data_max_workers: int = MARKET_DATA_MAX_WORKERS
-    api_port: int = API_PORT
+    api_port: int = Field(default=API_PORT, validation_alias=AliasChoices("API_PORT", "PORT"))
 
     @property
     def is_development(self) -> bool:
