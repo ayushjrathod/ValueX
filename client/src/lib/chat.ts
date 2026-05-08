@@ -13,18 +13,31 @@ export type ChatStreamEvent = {
   data: ChatEventPayload
 }
 
-import { apiUrl } from '@/lib/api'
-
 type StreamHandlers = {
   signal?: AbortSignal
   onEvent: (event: ChatStreamEvent) => void
+}
+
+function normalizeApiBase(value: string | undefined): string {
+  if (!value) {
+    return ''
+  }
+
+  return value.replace(/\/$/, '')
+}
+
+const API_BASE = normalizeApiBase(import.meta.env.VITE_API_URL)
+
+export function buildApiUrl(path: string): string {
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  return API_BASE ? `${API_BASE}${normalizedPath}` : normalizedPath
 }
 
 export async function streamChat(
   request: ChatRequest,
   { signal, onEvent }: StreamHandlers,
 ) {
-  const response = await fetch(apiUrl('/chat'), {
+  const response = await fetch(buildApiUrl('/chat'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

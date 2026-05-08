@@ -28,13 +28,8 @@ npm install
 Create a local env file in this directory:
 
 ```bash
-VITE_API_TARGET=http://127.0.0.1:8000
-```
+VITE_API_URL=http://127.0.0.1:8000
 
-For production frontend deployments, also set:
-
-```bash
-VITE_API_BASE_URL=https://your-backend-origin.example.com
 ```
 
 Start the dev server:
@@ -45,38 +40,20 @@ npm run dev
 
 By default the Vite dev server runs on port `3000`.
 
-## API Proxy
+## API Configuration
 
-The client proxies all frontend API requests through a single `/api` rule in [vite.config.ts](vite.config.ts).
+The client reads the backend origin from `VITE_API_URL`.
 
-- frontend requests go to `/api/...`
-- Vite forwards them to `VITE_API_TARGET`
-- the `/api` prefix is stripped before the request reaches the backend
+- in local development, point it at your backend, for example `http://127.0.0.1:8000`
+- in production, set `VITE_API_URL` in your hosting provider so the built client calls the deployed API directly
+- the backend routes are used as-is, for example `/chat`, `/users`, `/user-summary`, and `/health`
 
 Examples:
 
-- `/api/chat` -> `${VITE_API_TARGET}/chat`
-- `/api/users` -> `${VITE_API_TARGET}/users`
-- `/api/user-summary` -> `${VITE_API_TARGET}/user-summary`
-- `/api/health` -> `${VITE_API_TARGET}/health`
-
-## Production API Base URL
-
-In development, the browser talks to `/api/...` and Vite proxies those requests to `VITE_API_TARGET`.
-
-In production, there is no Vite dev proxy. The frontend therefore needs `VITE_API_BASE_URL` set at build time so browser requests go directly to your backend origin.
-
-Example:
-
-```bash
-VITE_API_BASE_URL=https://valuedx-api.onrender.com
-```
-
-With that variable set:
-
-- `/chat` requests are sent to `${VITE_API_BASE_URL}/chat`
-- `/users` requests are sent to `${VITE_API_BASE_URL}/users`
-- `/user-summary` requests are sent to `${VITE_API_BASE_URL}/user-summary`
+- `/chat` -> `${VITE_API_URL}/chat`
+- `/users` -> `${VITE_API_URL}/users`
+- `/user-summary` -> `${VITE_API_URL}/user-summary`
+- `/health` -> `${VITE_API_URL}/health`
 
 ## Available Scripts
 
@@ -104,9 +81,9 @@ With that variable set:
 
 The chat page currently does the following:
 
-- loads sample users from `/api/users`
-- loads a summary for the selected user from `/api/user-summary`
-- sends chat requests to `/api/chat`
+- loads sample users from `/users`
+- loads a summary for the selected user from `/user-summary`
+- sends chat requests to `/chat`
 - consumes server-sent events for progress, message, metrics, error, and done states
 - keeps a session id in the client so follow-up questions stay in the same conversation
 
