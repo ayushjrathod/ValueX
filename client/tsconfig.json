@@ -10,7 +10,7 @@
     "paths": {
       "@/*": ["./src/*"]
     },
-    "rootDir": "src/",
+    "rootDir": ".",
     "outDir": "dist/",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
