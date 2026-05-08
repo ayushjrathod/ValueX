@@ -14,9 +14,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.agents.catalog import AGENT_DESCRIPTIONS
-from src.classifier import classify
-from src.classifier.classifier import ClassificationEntities, ClassificationResult
-
+from src.services.classifier import classify
+from src.services.classifier.classifier import ClassificationEntities, ClassificationResult
 
 # ---------------------------------------------------------------------------
 # Helpers

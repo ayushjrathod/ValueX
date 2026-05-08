@@ -3,7 +3,6 @@ import re
 from src.agents.catalog import AgentName
 from src.agents.contracts import AgentRequest, AgentResponse
 
-
 _DISCLAIMER = (
     "General information only, not personalized investment advice. "
     "For decisions involving your money, consider your goals, risk tolerance, and time horizon."

@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict
 
 from src.config.settings import get_settings
 
+
 class SafetyVerdict(BaseModel):
     model_config = ConfigDict(frozen=True)
 

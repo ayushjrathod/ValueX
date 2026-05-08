@@ -16,8 +16,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.classifier import classify
-from src.classifier.classifier import ClassificationEntities, ClassificationResult
+from src.services.classifier import classify
+from src.services.classifier.classifier import ClassificationEntities, ClassificationResult
 
 # Fixture agent names may use "portfolio_query" which maps to "portfolio_health"
 # in our taxonomy. This mapping normalises the expected values.

@@ -5,7 +5,6 @@ Tests the full pipeline event flow (metadata → message → metrics → done)
 as well as safety-block and missing-LLM-key paths.
 All LLM calls are mocked so tests run without OPENAI_API_KEY.
 """
-import asyncio
 import json
 from unittest.mock import MagicMock, patch
 
@@ -13,8 +12,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.agents.portfolio_health import Observation, ObservationsResult
-from src.classifier.classifier import ClassificationEntities, ClassificationResult
-from src.session import get_session_store
+from src.services.classifier.classifier import ClassificationEntities, ClassificationResult
+from src.utils.session import get_session_store
 
 
 def _make_classification(agent: str = "portfolio_health", **entity_overrides) -> ClassificationResult:
@@ -326,7 +325,7 @@ def test_full_pipeline_event_order(mock_get_client, mock_classify, mock_route, a
 async def _raise_timeout(awaitable, timeout):
     if hasattr(awaitable, "close"):
         awaitable.close()
-    raise asyncio.TimeoutError
+    raise TimeoutError
 
 
 @patch("src.main.asyncio.to_thread", return_value=object())

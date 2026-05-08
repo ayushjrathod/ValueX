@@ -1,9 +1,10 @@
-import json
 from typing import Any
-from pydantic import BaseModel
 
 from openai import OpenAI
+from pydantic import BaseModel
+
 from src.config.settings import get_settings
+
 
 class _Usage:
     def __init__(self, input_tokens: int, output_tokens: int):

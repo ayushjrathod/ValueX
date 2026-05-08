@@ -2,15 +2,13 @@
 Train the safety classifier and serialize it to safety_classifier.pkl.
 """
 
-import json
 import pickle
 from pathlib import Path
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.pipeline import Pipeline
 from sklearn.model_selection import cross_val_score
-import numpy as np
+from sklearn.pipeline import Pipeline
 
 # Dataset
 
@@ -202,7 +200,7 @@ AUGMENTED_PASS = [
 
 
 def build_dataset():
-    texts, labels = zip(*BASE_DATA)
+    texts, labels = zip(*BASE_DATA, strict=False)
     texts = list(texts) + AUGMENTED_BLOCKED + AUGMENTED_PASS
     labels = list(labels) + [1] * len(AUGMENTED_BLOCKED) + [0] * len(AUGMENTED_PASS)
     return texts, labels

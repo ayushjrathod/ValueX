@@ -1,4 +1,4 @@
-from src.classifier.classifier import (
+from src.services.classifier.classifier import (
     ClassificationEntities,
     ClassificationError,
     ClassificationRefusal,

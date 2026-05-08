@@ -134,6 +134,16 @@ One real deployment caveat: `src/main.py` still allows `"*"` CORS in production 
 pytest tests/ -v
 ```
 
+## Linting and import sorting
+
+```bash
+ruff check . --fix
+```
+
+`ruff` is configured via `pyproject.toml` to enforce import grouping in this order:
+standard library, third-party, then first-party (`src`), with blank lines between groups.
+This setup currently enables only import sorting rules (`I`), not full style linting.
+
 The tests are split by what they can honestly prove.
 
 Mock-based tests always run and cover:

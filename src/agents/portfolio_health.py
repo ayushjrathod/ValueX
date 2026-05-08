@@ -5,15 +5,15 @@ from typing import Any, Literal
 from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.config.settings import (
-    TOP_HOLDINGS_COUNT,
-    get_settings,
-)
-from src.tools.market_data import fetch_benchmark, fetch_prices
-from src.tools.metrics import (
+from src.agents.tools.market_data import fetch_benchmark, fetch_prices
+from src.agents.tools.metrics import (
     compute_benchmark_comparison,
     compute_concentration,
     compute_performance,
+)
+from src.config.settings import (
+    TOP_HOLDINGS_COUNT,
+    get_settings,
 )
 
 logger = logging.getLogger(__name__)

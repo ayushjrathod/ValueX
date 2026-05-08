@@ -3,8 +3,8 @@ from unittest.mock import MagicMock
 from src.agents.catalog import AgentName
 from src.agents.contracts import AgentResponse
 from src.agents.registry import AGENT_REGISTRY
-from src.classifier.classifier import ClassificationEntities, ClassificationResult
-from src.router import route
+from src.agents.router import route
+from src.services.classifier.classifier import ClassificationEntities, ClassificationResult
 
 
 def _make_classification(agent: AgentName) -> ClassificationResult:

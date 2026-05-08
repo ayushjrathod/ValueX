@@ -8,7 +8,7 @@ from openai import OpenAI
 
 from src.agents.contracts import AgentRequest
 from src.agents.registry import AGENT_REGISTRY, build_not_implemented_response
-from src.classifier.classifier import ClassificationResult
+from src.services.classifier.classifier import ClassificationResult
 
 
 def route(

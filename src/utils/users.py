@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-_FIXTURES_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "users"
+_FIXTURES_DIR = Path(__file__).resolve().parents[2] / "fixtures" / "users"
 
 _cache: dict[str, dict[str, Any]] = {}
 
