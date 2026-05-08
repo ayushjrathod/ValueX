@@ -124,8 +124,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_production_requirements(self) -> Settings:
-        if self.is_production and not self.openai_api_key:
-            raise ValueError("OPENAI_API_KEY must be set when APP_ENV=production.")
+        if self.is_production and self.llm == "openai" and not self.openai_api_key:
+            raise ValueError("OPENAI_API_KEY must be set when APP_ENV=production and LLM=openai.")
+        if self.is_production and self.llm == "gcp" and not self.google_cloud_project:
+            raise ValueError("GOOGLE_CLOUD_PROJECT must be set when APP_ENV=production and LLM=gemini/gcp.")
         return self
 
 
