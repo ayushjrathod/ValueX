@@ -13,6 +13,8 @@ export type ChatStreamEvent = {
   data: ChatEventPayload
 }
 
+import { apiUrl } from '@/lib/api'
+
 type StreamHandlers = {
   signal?: AbortSignal
   onEvent: (event: ChatStreamEvent) => void
@@ -22,7 +24,7 @@ export async function streamChat(
   request: ChatRequest,
   { signal, onEvent }: StreamHandlers,
 ) {
-  const response = await fetch('/api/chat', {
+  const response = await fetch(apiUrl('/chat'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

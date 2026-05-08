@@ -31,6 +31,12 @@ Create a local env file in this directory:
 VITE_API_TARGET=http://127.0.0.1:8000
 ```
 
+For production frontend deployments, also set:
+
+```bash
+VITE_API_BASE_URL=https://your-backend-origin.example.com
+```
+
 Start the dev server:
 
 ```bash
@@ -53,6 +59,24 @@ Examples:
 - `/api/users` -> `${VITE_API_TARGET}/users`
 - `/api/user-summary` -> `${VITE_API_TARGET}/user-summary`
 - `/api/health` -> `${VITE_API_TARGET}/health`
+
+## Production API Base URL
+
+In development, the browser talks to `/api/...` and Vite proxies those requests to `VITE_API_TARGET`.
+
+In production, there is no Vite dev proxy. The frontend therefore needs `VITE_API_BASE_URL` set at build time so browser requests go directly to your backend origin.
+
+Example:
+
+```bash
+VITE_API_BASE_URL=https://valuedx-api.onrender.com
+```
+
+With that variable set:
+
+- `/chat` requests are sent to `${VITE_API_BASE_URL}/chat`
+- `/users` requests are sent to `${VITE_API_BASE_URL}/users`
+- `/user-summary` requests are sent to `${VITE_API_BASE_URL}/user-summary`
 
 ## Available Scripts
 

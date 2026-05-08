@@ -5,6 +5,7 @@ import { ArrowLeft, LoaderCircle, RefreshCcw, Sparkles } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { apiUrl } from '@/lib/api'
 import { streamChat, type ChatEventPayload, type ChatStreamEvent } from '@/lib/chat'
 
 type PortfolioProfile = {
@@ -61,7 +62,7 @@ function loadProfiles(): Promise<PortfolioProfile[]> {
     return usersRequest
   }
 
-  usersRequest = fetch('/api/users')
+  usersRequest = fetch(apiUrl('/users'))
     .then(async (response) => {
       if (!response.ok) {
         throw new Error(`Users request failed with status ${response.status}`)
@@ -85,7 +86,7 @@ function loadUserSummaryFor(userId: string, fallbackSummary: string): Promise<st
     return existingRequest
   }
 
-  const request = fetch(`/api/user-summary?user_id=${encodeURIComponent(userId)}`)
+  const request = fetch(`${apiUrl('/user-summary')}?user_id=${encodeURIComponent(userId)}`)
     .then(async (response) => {
       if (!response.ok) {
         throw new Error(`User summary request failed with status ${response.status}`)
