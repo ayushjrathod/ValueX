@@ -79,6 +79,7 @@ def _build_mock_response(agent: str, entities: dict[str, Any] | None = None) -> 
 # Live-LLM conversation tests (the real tests)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.live_llm
 @_skip_no_key
 def test_follow_up_session_live(conversation_test_cases):
     """Follow-up resolution: ≥ 75% routing accuracy with real LLM."""
@@ -104,6 +105,7 @@ def test_follow_up_session_live(conversation_test_cases):
     )
 
 
+@pytest.mark.live_llm
 @_skip_no_key
 def test_multi_intent_session_live(conversation_test_cases):
     """Topic-switch handling: ≥ 75% routing accuracy with real LLM."""
@@ -129,6 +131,7 @@ def test_multi_intent_session_live(conversation_test_cases):
     )
 
 
+@pytest.mark.live_llm
 @_skip_no_key
 def test_ambiguous_session_live(conversation_test_cases):
     """Ambiguous/typo handling: ≥ 60% routing accuracy with real LLM."""

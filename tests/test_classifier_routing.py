@@ -78,6 +78,7 @@ _skip_no_key = pytest.mark.skipif(
 # Live-LLM routing accuracy (the real test)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.live_llm
 @_skip_no_key
 def test_classifier_routing_accuracy(gold_classifier_queries):
     """
@@ -116,6 +117,7 @@ def test_classifier_routing_accuracy(gold_classifier_queries):
 # Live-LLM entity extraction
 # ---------------------------------------------------------------------------
 
+@pytest.mark.live_llm
 @_skip_no_key
 def test_classifier_entity_extraction(gold_classifier_queries):
     """

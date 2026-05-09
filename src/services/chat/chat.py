@@ -2,8 +2,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import AsyncIterator
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from src.agents.catalog import AgentName
