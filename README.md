@@ -7,6 +7,21 @@ The important part is not that it uses agents. The important part is where I cho
 
 Currently the system has one real agent, `portfolio_health`. `market_research` is an explicitly registered stub, and the rest of the taxonomy still falls back to a structured `not_implemented` response. The code is organized to make adding new agents easy and low-risk.
 
+## Architecture decisions
+
+### Raw OpenAI SDK over LangChain
+
+This repo uses the raw OpenAI Python SDK plus small local abstractions instead of LangChain.
+
+That choice was deliberate.
+
+- the request path is short and explicit: local safety check, one structured classifier call, one routed agent call, SSE response
+- the OpenAI SDK already gives the only LLM features this project actually needs: typed structured outputs, usage accounting, and direct request control
+- the service already has its own thin contracts for routing, agent inputs, session history, and metrics; adding LangChain would duplicate those abstractions rather than simplify them
+- latency and cost tracking are first-class requirements here, and keeping the SDK calls direct makes it easier to attribute per-stage usage and failures without callback layers or framework adapters in the middle
+
+I would only reach for LangChain if this repo needed dynamic prompt graphs, provider-swapping across many models, or a larger tool orchestration surface where framework-level composition started paying for itself. In the current codebase, it would mostly add indirection.
+
 ## How the system works
 
 ### 1. Safety runs first, locally
@@ -70,7 +85,19 @@ Only after those numbers exist does the LLM get involved. It receives an authori
 
 The tradeoff is one less flashy architecture. There is no agentic tool loop here anymore. In this version of the system, that would be unnecessary overhead because the classifier has already done the hard selection work and the portfolio agent mostly follows a fixed compute path. An agentic loop would make more sense if the system had to choose among multiple live tools at runtime, for example market signals, current news, web search, filings, or other external research sources, and then decide which results to trust or combine before answering. In that kind of setup, the extra orchestration cost could buy real capability. Here, it would mostly buy latency.
 
-### 5. Sessions and streaming are intentionally pragmatic
+### 5. Cost and latency are measured from raw artifacts
+
+I kept the benchmark harness and the raw JSONL outputs in the repo because summary claims are only useful if the underlying rows are inspectable.
+
+The measurement setup is intentionally narrow:
+
+- the harness in `scripts/measure_latency.py` warms the server first, then sends 100 sequential requests to `/chat`
+- each request records client-observed time to the first answer-bearing `message` event, client end-to-end time, server-reported end-to-end time, model name, and estimated request cost
+- results are written as JSONL rows so failures remain in the artifact instead of being averaged away
+
+That last point matters. The `gpt-4o-mini` artifact includes one timeout. It is preserved in the committed file instead of being removed from the summary.
+
+### 6. Sessions and streaming are intentionally pragmatic
 
 Session history is stored in a process-local, thread-safe in-memory store with a 1-hour TTL and a 10-turn cap. That is not production infrastructure, and I am not pretending it is. I kept it in memory because this service only needs short-lived conversational memory for follow-up resolution inside a single service instance. A database would add setup, persistence, schema decisions, and operational complexity without improving the core things this project is trying to prove: safe gating, correct routing, deterministic portfolio analysis, and observable SSE behavior. For this scope, in-memory state is the simplest thing that supports follow-up questions well enough.
 
@@ -195,30 +222,30 @@ They are the direct JSONL outputs of the script, including failures. That matter
 
 I measure latency with `scripts/measure_latency.py`, which sends repeated `/chat` requests, parses the SSE stream, and writes JSONL output for later analysis.
 
-For this project, I treat “streaming first-token latency” as time to the first answer-bearing SSE event the client can use, not literal model token streaming. That distinction matters because the service streams pipeline events, but the OpenAI calls themselves are still blocking.
+For this project, “first-token latency” means time to the first answer-bearing SSE `message` event the client can use, not literal model token streaming. That distinction matters because the service streams pipeline events, but the OpenAI calls themselves are still blocking structured-output calls.
 
-The benchmark artifacts are sequential, warm-server runs of 100 requests against the same `/chat` path. They are useful because they answer slightly different questions:
+The committed artifacts are sequential, warm-server runs of 100 requests against the same `/chat` path:
 
-- `benchmark/latency-gpt-4o-mini.jsonl` shows the default cheap path under the model I actually use in the service by default
-- `benchmark/latency-gpt-4-1.jsonl` shows the more expensive evaluation path under a stronger model
+- `benchmark/latency-gpt-4o-mini.jsonl` is the default cheap path under the model the service uses by default
+- `benchmark/latency-gpt-4-1.jsonl` is the comparison run under a stronger, more expensive model
 
-Summary of the committed artifacts:
+Summary from the committed JSONL files:
 
 | Run | Requests ok | First useful message p50 | First useful message p95 | Server e2e p50 | Server e2e p95 | Mean cost |
 | --- | --- | --- | --- | --- | --- | --- |
-| `gpt-4o-mini` | 99 / 100 | 5.539 s | 8.627 s | 5.536 s | 8.624 s | about $0.0002 per request in the raw rows |
-| `gpt-4.1` | 100 / 100 | 2.656 s | 6.800 s | 2.653 s | 6.799 s | about $0.003 per request |
+| `gpt-4o-mini` | 99 / 100 | 5.539 s | 8.627 s | 5.536 s | 8.624 s | about $0.00021 per request in the raw rows |
+| `gpt-4.1` | 100 / 100 | 2.656 s | 6.800 s | 2.653 s | 6.799 s | about $0.00307 per request |
 
 So the read is:
 
 - both runs stay far under the $0.05 cost budget
 - the default `gpt-4o-mini` run clears the 6-second target at p50 but not p95
-- the committed `gpt-4.1` run is faster in this snapshot, but costs roughly an order of magnitude more
+- the committed `gpt-4.1` run is faster in this snapshot, but costs about 15x more on average
 - one `gpt-4o-mini` request timed out
 
 One small artifact caveat is worth calling out directly: the summary row in `benchmark/latency-gpt-4o-mini.jsonl` shows `estimated_cost_usd` rounded to `0.0`. That is a formatting artifact from the script's 3-decimal summary rounding, not a claim that the requests were free. The per-request rows in the same file preserve the actual values, which are around `$0.00019` to `$0.00023`.
 
-The remaining p95 problem is still mostly on the observation LLM call, not on the local parts of the pipeline. That is why the timeout is set to 12 seconds: it is long enough to survive typical tail latency, but still bounded enough to fail fast when upstream latency gets unreasonable.
+The remaining p95 problem is still mostly on the LLM path, not on the local parts of the pipeline. That is why the timeout is set to 12 seconds: it is long enough to survive typical tail latency, but still bounded enough to fail fast when upstream latency gets unreasonable.
 
 I have not load-tested concurrency yet. The current benchmark is sequential and warm-server only, which is useful for reporting but not enough to make production claims.
 
