@@ -274,3 +274,6 @@ If I had more time, here is where I would spend it.
 **Auth and multi-tenancy.** There is no authentication or tenant isolation right now. Production would need JWT auth, per-user request budgets, and isolated session namespaces.
 
 
+
+
+
