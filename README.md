@@ -272,3 +272,5 @@ If I had more time, here is where I would spend it.
 **Harden the safety model.** The current model handles common cases but is not robust to adversarial rephrasing. I would add a second-pass LLM check for borderline scores, run periodic red-team evaluations, and add per-user rate limits as a backstop.
 
 **Auth and multi-tenancy.** There is no authentication or tenant isolation right now. Production would need JWT auth, per-user request budgets, and isolated session namespaces.
+
+
