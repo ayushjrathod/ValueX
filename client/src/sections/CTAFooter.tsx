@@ -17,7 +17,7 @@ export default function CTAFooter() {
             className="text-cx-text-primary font-sans font-normal leading-[1.2] tracking-[-0.01em] mb-4"
             style={{ fontSize: 'clamp(1.75rem, 3vw, 2.5rem)' }}
           >
-            Ready to Ask About a Real Portfolio?
+            Ready to Try a Fixture Portfolio?
           </h2>
           <p className="text-cx-text-secondary leading-relaxed mb-8">
             Open the assistant, choose a sample investor, and see how ValueX explains concentration, returns, and benchmark context in plain language.
@@ -34,17 +34,21 @@ export default function CTAFooter() {
         <div className="border-t border-white/[0.08] pt-8">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
             <p className="text-cx-text-muted text-sm">
-              © 2025 ValueX. All rights reserved.
+              © 2026 ValueX. All rights reserved.
             </p>
             <div className="flex items-center gap-6">
-              {['Privacy', 'Terms', 'Contact'].map((link) => (
-                <a
-                  key={link}
-                  href="#"
+              {[
+                { label: 'Privacy', to: '/privacy' },
+                { label: 'Terms', to: '/terms' },
+                { label: 'Contact', to: '/contact' },
+              ].map(({ label, to }) => (
+                <Link
+                  key={label}
+                  to={to}
                   className="text-cx-text-muted text-sm transition-colors duration-300 hover:text-cx-text-secondary"
                 >
-                  {link}
-                </a>
+                  {label}
+                </Link>
               ))}
             </div>
           </div>

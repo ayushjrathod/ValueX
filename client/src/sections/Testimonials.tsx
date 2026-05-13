@@ -2,8 +2,8 @@ import { motion } from 'framer-motion'
 
 const highlights = [
   {
-    title: 'One implemented agent',
-    body: 'portfolio_health is the only end-to-end agent implemented in the repo today.',
+    title: 'Two working agents',
+    body: 'portfolio_health handles concentration, return, and benchmark analysis. general_query covers definitions, greetings, and plain-language finance questions. Other intents (market research, planning, strategy) are classified but not yet implemented.',
   },
   {
     title: 'Deterministic portfolio math',

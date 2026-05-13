@@ -1,3 +1,5 @@
+import Nav from '../components/Nav'
+import BackToTop from '../components/BackToTop'
 import Hero from '../sections/Hero'
 import TrustBar from '../sections/TrustBar'
 import FeatureShowcase from '../sections/FeatureShowcase'
@@ -9,6 +11,7 @@ import CTAFooter from '../sections/CTAFooter'
 export default function Home() {
   return (
     <main className="min-h-screen bg-cx-obsidian">
+      <Nav />
       <Hero />
       <TrustBar />
       <FeatureShowcase />
@@ -16,6 +19,7 @@ export default function Home() {
       <HowItWorks />
       <Testimonials />
       <CTAFooter />
+      <BackToTop />
     </main>
   )
 }

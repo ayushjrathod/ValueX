@@ -89,7 +89,7 @@ export default function Hero() {
             href="#features"
             className="inline-block bg-transparent border border-white/15 text-cx-text-primary px-8 py-3.5 rounded-sm text-xs font-medium uppercase tracking-[0.08em] transition-all duration-300 hover:border-white/25 hover:bg-white/5 focus:outline-none focus:ring-2 focus:ring-cx-gold focus:ring-offset-2 focus:ring-offset-cx-obsidian"
           >
-            View Example Output
+            See Example Observations
           </a>
         </motion.div>
       </div>

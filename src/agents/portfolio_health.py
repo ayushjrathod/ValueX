@@ -143,6 +143,11 @@ def run(
         result["performance"] = performance
     if benchmark_comparison:
         result["benchmark_comparison"] = benchmark_comparison
+    elif performance:
+        result["benchmark_note"] = (
+            "Benchmark data is unavailable right now — comparison omitted. "
+            "Concentration and return metrics are still based on live prices."
+        )
     result["observations"] = observations
     result["status"] = "ok"
     result["agent"] = "portfolio_health"
